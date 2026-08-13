@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1785886003744,
+      "tag": "0000_certain_chimera",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785886669982,
+      "tag": "0001_powerful_the_executioner",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785888131997,
+      "tag": "0002_flawless_sabra",
+      "breakpoints": true
+    }
+  ]
+}

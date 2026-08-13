@@ -1,0 +1,1 @@
+ALTER TABLE `scheduled_posts` ADD `client_notes` text DEFAULT '' NOT NULL;
