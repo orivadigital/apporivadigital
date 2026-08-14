@@ -44,8 +44,11 @@ test("contracts and finance APIs reject collaborators before querying data", asy
 test("database policies still require the sensitive agency permission", async () => {
   const schema = await read("supabase/schema.sql");
   const scopeMigration = await read("supabase/migrations/20260810013000_assigned_work_editing.sql");
+  const adminTaskFix = await read("supabase/migrations/20260814003000_fix_agency_task_admin_returning.sql");
   assert.match(schema, /create policy contracts_all[\s\S]*private\.can_manage_agency\(\)/);
   assert.match(schema, /create policy financial_entries_all[\s\S]*private\.can_manage_agency\(\)/);
+  assert.match(schema, /create policy agency_tasks_select[\s\S]*private\.can_manage_agency\(\) or private\.can_view_task\(id\)/);
+  assert.match(adminTaskFix, /create policy agency_tasks_select[\s\S]*private\.can_manage_agency\(\)[\s\S]*private\.can_view_task\(id\)/);
   assert.match(scopeMigration, /p\.role = 'colaborador' and t\.assigned_to = p\.id/);
   assert.match(scopeMigration, /agency_tasks_update[\s\S]*private\.can_update_assigned_task\(id\)/);
   assert.match(scopeMigration, /can_attach_task[\s\S]*'colaborador', 'empresa_cliente', 'parceiro'/);
