@@ -10,7 +10,7 @@ create table if not exists private.platform_settings (
 );
 
 insert into private.platform_settings (key, value)
-values ('owner_email', to_jsonb('proprietario@exemplo.com'::text))
+values ('owner_email', to_jsonb('ramonvalnei3@gmail.com'::text))
 on conflict (key) do update set value = excluded.value, updated_at = now();
 
 create table public.profiles (
@@ -628,7 +628,7 @@ using (private.can_manage_agency()) with check (private.can_manage_agency());
 create policy financial_entries_all on public.financial_entries for all to authenticated
 using (private.can_manage_agency()) with check (private.can_manage_agency());
 create policy agency_tasks_select on public.agency_tasks for select to authenticated
-using (private.can_view_task(id));
+using (private.can_manage_agency() or private.can_view_task(id));
 create policy agency_tasks_insert on public.agency_tasks for insert to authenticated
 with check (private.can_manage_agency());
 create policy agency_tasks_update on public.agency_tasks for update to authenticated
