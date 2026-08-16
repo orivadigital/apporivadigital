@@ -94,7 +94,7 @@ create table public.post_files (
   id uuid primary key default gen_random_uuid(),
   post_id uuid not null references public.scheduled_posts(id) on delete cascade,
   company_id uuid not null references public.companies(id) on delete cascade,
-  file_url text not null unique,
+  file_url text not null,
   original_file_url text not null,
   file_name text not null,
   file_type text not null,
@@ -107,6 +107,8 @@ create table public.post_files (
 
 create index post_files_post_order_idx on public.post_files (post_id, order_index);
 create index post_files_company_idx on public.post_files (company_id, post_id);
+create index post_files_file_url_idx on public.post_files (file_url);
+create unique index post_files_post_file_url_uidx on public.post_files (post_id, file_url);
 
 create table public.post_comments (
   id uuid primary key default gen_random_uuid(),
@@ -577,7 +579,7 @@ create policy company_users_select on public.company_users for select to authent
 using (profile_id = private.current_profile_id() or private.is_agency_user());
 
 create policy scheduled_posts_select on public.scheduled_posts for select to authenticated
-using (private.can_view_post(company_id, status));
+using (private.can_manage_agency() or private.can_view_post_item(id));
 create policy scheduled_posts_insert on public.scheduled_posts for insert to authenticated
 with check (private.can_manage_content(company_id));
 create policy scheduled_posts_update on public.scheduled_posts for update to authenticated
@@ -591,7 +593,14 @@ using (exists (
   where sp.id = post_id and private.can_view_post(sp.company_id, sp.status)
 ));
 create policy post_files_insert on public.post_files for insert to authenticated
-with check (private.can_manage_content(company_id));
+with check (
+  private.can_attach_post(post_id)
+  and exists (
+    select 1 from public.scheduled_posts sp
+    where sp.id = post_files.post_id
+      and sp.company_id = post_files.company_id
+  )
+);
 create policy post_files_update on public.post_files for update to authenticated
 using (private.can_manage_content(company_id)) with check (private.can_manage_content(company_id));
 create policy post_files_delete on public.post_files for delete to authenticated
@@ -918,7 +927,10 @@ values ('oriva-files', 'oriva-files', false, 2147483648, array['image/jpeg','ima
 on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
 
 create policy oriva_storage_select on storage.objects for select to authenticated
-using (bucket_id = 'oriva-files' and private.can_view_storage_object(name));
+using (
+  bucket_id = 'oriva-files'
+  and (private.can_upload_storage_object(name) or private.can_view_storage_object(name))
+);
 create policy oriva_storage_insert on storage.objects for insert to authenticated
 with check (bucket_id = 'oriva-files' and private.can_upload_storage_object(name));
 create policy oriva_storage_update on storage.objects for update to authenticated
