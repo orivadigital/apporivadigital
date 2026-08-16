@@ -9,6 +9,7 @@
     clientMode: false,
     restrictedMode: false,
     permissions: { canManage: false, canReview: true, canEditAssigned: false, canAttach: false },
+    pendingFiles: [],
     view: 'month',
     cursor: new Date(),
     filters: { status: '', content_type: '', social_network: '' }
@@ -189,6 +190,11 @@
     try {
       var payload = await apiJson('/api/companies');
       contentState.companies = payload.companies || [];
+      if (!contentState.clientMode && !contentState.restrictedMode) {
+        contentState.companies = contentState.companies.filter(function (company) {
+          return String(company.relationshipType || 'Cliente').toLowerCase() !== 'lead';
+        });
+      }
       if (!contentState.clientMode && !contentState.restrictedMode) {
         try {
           var accessPayload = await apiJson('/api/access');
@@ -485,6 +491,80 @@
       control + (hint ? '<small>' + esc(hint) + '</small>' : '') + '</div>';
   }
 
+  function scheduleDateRow(value, description) {
+    return '<div class="schedule-date-row">' +
+      '<div><span class="schedule-date-label">Data</span><input type="date" name="scheduled_date" required value="' + esc(value || '') + '"></div>' +
+      '<div class="schedule-description"><span class="schedule-date-label">Descrição/legenda específica (opcional)</span><input name="schedule_description" maxlength="2000" value="' + esc(description || '') + '" placeholder="Se ficar vazio, será usada a legenda geral"></div>' +
+      '<button type="button" class="btn-xs schedule-remove" onclick="removeContentScheduleDate(this)" aria-label="Remover esta data">Remover</button>' +
+    '</div>';
+  }
+
+  function addContentScheduleDate() {
+    var list = document.getElementById('content-schedule-dates');
+    if (!list) return;
+    if (list.querySelectorAll('.schedule-date-row').length >= 31) {
+      showToast('Você pode adicionar no máximo 31 datas por vez.', true);
+      return;
+    }
+    list.insertAdjacentHTML('beforeend', scheduleDateRow('', ''));
+  }
+  window.addContentScheduleDate = addContentScheduleDate;
+
+  function removeContentScheduleDate(button) {
+    var list = document.getElementById('content-schedule-dates');
+    if (!list) return;
+    var rows = list.querySelectorAll('.schedule-date-row');
+    if (rows.length <= 1) {
+      showToast('Mantenha pelo menos uma data programada.', true);
+      return;
+    }
+    var row = button.closest('.schedule-date-row');
+    if (row) row.remove();
+  }
+  window.removeContentScheduleDate = removeContentScheduleDate;
+
+  function renderPendingContentFiles() {
+    var list = document.getElementById('pending-content-files');
+    if (!list) return;
+    if (!contentState.pendingFiles.length) {
+      list.innerHTML = '<div class="management-inline-empty">Nenhum arquivo selecionado.</div>';
+      return;
+    }
+    list.innerHTML = contentState.pendingFiles.map(function (file, index) {
+      return '<div class="file-row"><div class="file-main"><b>' + esc(file.name) + '</b><span>' + esc(formatBytes(file.size)) + '</span></div>' +
+        '<button type="button" class="btn-xs" style="color:var(--vermelho)" onclick="removePendingContentFile(' + index + ')">Remover</button></div>';
+    }).join('') + '<button type="button" class="btn btn-ghost clear-files-button" onclick="clearPendingContentFiles()">Limpar todos os arquivos</button>';
+  }
+
+  function handleContentFiles(input) {
+    contentState.pendingFiles = Array.prototype.slice.call(input.files || []);
+    renderPendingContentFiles();
+  }
+  window.handleContentFiles = handleContentFiles;
+
+  function removePendingContentFile(index) {
+    contentState.pendingFiles.splice(index, 1);
+    renderPendingContentFiles();
+  }
+  window.removePendingContentFile = removePendingContentFile;
+
+  function clearPendingContentFiles() {
+    contentState.pendingFiles = [];
+    var input = document.getElementById('content-files-input');
+    if (input) input.value = '';
+    renderPendingContentFiles();
+  }
+  window.clearPendingContentFiles = clearPendingContentFiles;
+
+  function agencyContentFileRows(post) {
+    return (post.files || []).map(function (file) {
+      return '<div class="file-row"><div class="file-main"><b>' + esc(file.fileName) + '</b><span>' + esc(formatBytes(file.fileSize)) + '</span></div><div class="management-actions">' +
+        '<a class="btn-xs" href="' + esc(file.previewUrl) + '" target="_blank" rel="noopener">Abrir</a>' +
+        '<button type="button" class="btn-xs" style="color:var(--vermelho)" onclick="deleteContentFile(\'' + esc(file.id) + '\',\'' + esc(post.id) + '\',true)">Excluir arquivo</button>' +
+      '</div></div>';
+    }).join('');
+  }
+
   function openContentForm(postId) {
     if (!contentState.permissions.canManage) {
       showToast('Somente a agência pode criar ou editar conteúdos.', true);
@@ -492,13 +572,16 @@
     }
     var post = postId ? contentState.posts.find(function (item) { return item.id === postId; }) : null;
     var editing = Boolean(post);
+    contentState.pendingFiles = [];
     var today = dateKey(new Date());
     var teamOptions = contentState.team.map(function (person) { return { value: person.id, label: (person.role === 'partner' ? 'Parceiro · ' : '') + (person.name || person.email) }; });
     var planningFields = [
       formField('Título do conteúdo', '<input name="title" required maxlength="120" value="' + esc(post ? post.title : '') + '" placeholder="Ex.: Carrossel de lançamento">', true),
       formField('Tipo de conteúdo', '<select name="content_type" required>' + options(contentTypes, post ? post.contentType : 'Post') + '</select>'),
       formField('Rede social sugerida', '<select name="social_network" required>' + options(networks, post ? post.socialNetwork : 'Instagram') + '</select>'),
-      formField('Data programada', '<input type="date" name="scheduled_date" required value="' + esc(post ? post.scheduledDate : today) + '">'),
+      editing
+        ? formField('Data programada', '<input type="date" name="scheduled_date" required value="' + esc(post.scheduledDate) + '">')
+        : formField('Datas programadas', '<div id="content-schedule-dates" class="schedule-date-list">' + scheduleDateRow(today, '') + '</div><button type="button" class="btn btn-ghost add-date-button" onclick="addContentScheduleDate()">+ Adicionar outra data</button>', true, 'Cadastre até 31 datas de uma só vez. Cada data criará um conteúdo separado no calendário.'),
       formField('Horário programado', '<input type="time" name="scheduled_time" required value="' + esc(post ? post.scheduledTime : '09:00') + '">')
     ];
     var copyFields = [
@@ -513,12 +596,13 @@
     if (!editing) {
       workflowFields.push(formField(
         'Arquivos do conteúdo',
-        '<div class="upload-zone"><div style="font-weight:700;margin-bottom:5px">Imagem, arte, vídeo ou PDF</div><input type="file" name="files" accept="image/*,video/*,application/pdf" multiple required></div>',
+        '<div class="upload-zone"><div style="font-weight:700;margin-bottom:5px">Imagem, arte, vídeo ou PDF</div><input id="content-files-input" type="file" accept="image/*,video/*,application/pdf" multiple onchange="handleContentFiles(this)"></div><div id="pending-content-files" class="file-list pending-file-list"><div class="management-inline-empty">Nenhum arquivo selecionado.</div></div>',
         true,
         'Para carrossel, selecione as imagens na ordem correta. Os arquivos originais serão preservados sem compressão.'
       ));
     } else {
-      workflowFields.push(formField('Arquivos atuais', '<div class="upload-zone">' + esc((post.files || []).length + ' arquivo(s) preservado(s) na qualidade original') + '</div>', true));
+      workflowFields.push(formField('Arquivos atuais', '<div class="file-list">' + (agencyContentFileRows(post) || '<div class="management-inline-empty">Nenhum arquivo anexado.</div>') + '</div>', true));
+      workflowFields.push(formField('Adicionar novos arquivos', '<div class="upload-zone"><input id="content-files-input" type="file" accept="image/*,video/*,application/pdf" multiple onchange="handleContentFiles(this)"></div><div id="pending-content-files" class="file-list pending-file-list"><div class="management-inline-empty">Nenhum arquivo selecionado.</div></div>', true, 'Os novos arquivos serão adicionados sem substituir os atuais.'));
     }
     var html = modalHeader(editing ? 'Editar conteúdo' : 'Novo conteúdo') +
       '<form id="content-form" class="modal-body" onsubmit="saveContent(event,\'' + (post ? esc(post.id) : '') + '\')">' +
@@ -535,6 +619,7 @@
     event.preventDefault();
     var form = event.currentTarget;
     var button = document.getElementById('save-content-button');
+    var createdCount = 0;
     button.disabled = true;
     button.textContent = 'Salvando...';
     try {
@@ -560,11 +645,22 @@
         });
       } else {
         var createData = new FormData(form);
+        createData.delete('files');
+        contentState.pendingFiles.forEach(function (file) { createData.append('files', file); });
+        if (!contentState.pendingFiles.length) throw new Error('Selecione pelo menos um arquivo para o conteúdo.');
         createData.append('tenant_id', contentState.tenantId);
-        await apiJson('/api/posts', { method: 'POST', body: createData });
+        var created = await apiJson('/api/posts', { method: 'POST', body: createData });
+        createdCount = Number(created.createdCount || 1);
+      }
+      if (postId && contentState.pendingFiles.length) {
+        var upload = new FormData();
+        upload.append('post_id', postId);
+        contentState.pendingFiles.forEach(function (file) { upload.append('files', file); });
+        await apiJson('/api/post-files', { method: 'POST', body: upload });
       }
       closeContentModal();
-      showToast(postId ? 'Conteúdo atualizado com sucesso.' : 'Conteúdo salvo no calendário.');
+      if (postId) showToast('Conteúdo atualizado com sucesso.');
+      else showToast(createdCount > 1 ? createdCount + ' conteúdos foram criados no calendário.' : 'Conteúdo salvo no calendário.');
       await loadContentPosts();
     } catch (error) {
       showToast(error.message, true);
@@ -645,6 +741,21 @@
   }
   window.deleteAssignedPostFile = deleteAssignedPostFile;
 
+  async function deleteContentFile(fileId, postId, reopenEdit) {
+    if (!window.confirm('Excluir este arquivo definitivamente?')) return;
+    try {
+      await apiJson('/api/post-files?id=' + encodeURIComponent(fileId), { method: 'DELETE' });
+      closeContentModal();
+      showToast('Arquivo excluído do conteúdo.');
+      await loadContentPosts();
+      if (contentState.posts.some(function (post) { return post.id === postId; })) {
+        if (reopenEdit) openContentForm(postId);
+        else openContentDetails(postId);
+      }
+    } catch (error) { showToast(error.message, true); }
+  }
+  window.deleteContentFile = deleteContentFile;
+
   function mainPreview(post) {
     var file = post.files && post.files[0];
     if (!file) return '<div style="color:#fff;text-align:center">' + ico.material + '<div style="margin-top:8px">Sem arquivo</div></div>';
@@ -665,8 +776,9 @@
     if (!post) return;
     var color = statusColors[post.status] || '#7c3aed';
     var files = (post.files || []).map(function (file, index) {
-      return '<a class="file-link" href="' + esc(file.downloadUrl) + '" download>↓ Original ' +
-        esc((index + 1) + '. ' + file.fileName) + ' · ' + esc(formatBytes(file.fileSize)) + '</a>';
+      return '<div class="file-row"><div class="file-main"><a class="file-link" href="' + esc(file.downloadUrl) + '" download>↓ Original ' +
+        esc((index + 1) + '. ' + file.fileName) + ' · ' + esc(formatBytes(file.fileSize)) + '</a></div>' +
+        (contentState.permissions.canManage ? '<button type="button" class="btn-xs" style="color:var(--vermelho)" onclick="deleteContentFile(\'' + esc(file.id) + '\',\'' + esc(post.id) + '\',false)">Excluir</button>' : '') + '</div>';
     }).join('');
     var review = '';
     if (!contentState.permissions.canManage && contentState.permissions.canReview) {
