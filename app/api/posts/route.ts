@@ -108,41 +108,61 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const uploadedPaths: string[] = [];
-  let postId = "";
+  const postIds: string[] = [];
   try {
     const form = await request.formData();
     const access = await requireCompany(request, String(form.get("tenant_id") ?? ""));
     if (!access.isAgency) return Response.json({ error: "Somente a agência pode criar conteúdos." }, { status: 403 });
+    const companies = await restRequest<Array<Record<string, unknown>>>(request, `companies?id=eq.${encodeURIComponent(access.companyId)}&select=id,relationship_type&limit=1`);
+    if (!companies[0]) return Response.json({ error: "Empresa não encontrada." }, { status: 404 });
+    if (companies[0].relationship_type === "lead") {
+      return Response.json({ error: "Leads não podem receber conteúdos. Converta o lead em cliente antes de usar o calendário de posts." }, { status: 400 });
+    }
 
     const title = String(form.get("title") ?? "").trim();
     const contentType = contentTypeToDb(form.get("content_type"));
     const network = networkToDb(form.get("social_network"));
     const status = postStatusToDb(form.get("status") ?? "Rascunho");
-    const scheduledDate = String(form.get("scheduled_date") ?? "");
+    const scheduledDates = form.getAll("scheduled_date").map((value) => String(value ?? "").trim());
+    const scheduleDescriptions = form.getAll("schedule_description").map((value) => String(value ?? "").trim());
     const scheduledTime = String(form.get("scheduled_time") ?? "");
     const assigned = String(form.get("assigned_to") ?? "").trim();
-    if (!title || !scheduledDate || !scheduledTime) return Response.json({ error: "Título, data e horário são obrigatórios." }, { status: 400 });
+    if (!title || !scheduledDates.length || scheduledDates.some((date) => !date) || !scheduledTime) return Response.json({ error: "Título, todas as datas e horário são obrigatórios." }, { status: 400 });
+    if (scheduledDates.length > 31) return Response.json({ error: "Cadastre no máximo 31 datas por vez." }, { status: 400 });
+    if (scheduledDates.some((date) => !/^\d{4}-\d{2}-\d{2}$/.test(date))) return Response.json({ error: "Uma das datas programadas é inválida." }, { status: 400 });
     if (!CONTENT_TYPES.includes(contentType) || !NETWORKS.includes(network) || !POST_STATUSES.includes(status)) return Response.json({ error: "Tipo, rede social ou status inválido." }, { status: 400 });
 
-    const posts = await restRequest<Array<Record<string, unknown>>>(request, "scheduled_posts", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify({ company_id: access.companyId, title, content_type: contentType, social_network: network, scheduled_date: scheduledDate, scheduled_time: scheduledTime, caption: String(form.get("caption") ?? "").trim(), internal_notes: String(form.get("internal_notes") ?? "").trim(), client_notes: String(form.get("client_notes") ?? "").trim(), status, assigned_to: isUuid(assigned) ? assigned : null, created_by: access.actor.id }) });
-    postId = String(posts[0]?.id ?? "");
-    if (!postId) throw new Error("Não foi possível criar o conteúdo.");
+    const defaultCaption = String(form.get("caption") ?? "").trim();
+    const basePost = { company_id: access.companyId, title, content_type: contentType, social_network: network, scheduled_time: scheduledTime, internal_notes: String(form.get("internal_notes") ?? "").trim(), client_notes: String(form.get("client_notes") ?? "").trim(), status, assigned_to: isUuid(assigned) ? assigned : null, created_by: access.actor.id };
+    const rowsToCreate = scheduledDates.map((scheduledDate, index) => ({
+      ...basePost,
+      scheduled_date: scheduledDate,
+      caption: scheduleDescriptions[index] || defaultCaption,
+    }));
+    const posts = await restRequest<Array<Record<string, unknown>>>(request, "scheduled_posts", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(rowsToCreate) });
+    for (const post of posts) {
+      const id = String(post.id ?? "");
+      if (id) postIds.push(id);
+    }
+    if (postIds.length !== rowsToCreate.length) throw new Error("Não foi possível criar todos os conteúdos.");
 
     const files = form.getAll("files").filter((value): value is File => typeof value !== "string" && value.size > 0 && Boolean(value.name));
     if (files.length > 20) throw new Error("Envie no máximo 20 arquivos por conteúdo.");
-    const metadata: Array<Record<string, unknown>> = [];
+    const sharedFiles: Array<Record<string, unknown>> = [];
+    const batchId = crypto.randomUUID();
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
-      const path = `companies/${access.companyId}/posts/${postId}/original/${String(index).padStart(2, "0")}-${crypto.randomUUID()}-${safeFileName(file.name)}`;
+      const path = `companies/${access.companyId}/posts/bulk-${batchId}/original/${String(index).padStart(2, "0")}-${crypto.randomUUID()}-${safeFileName(file.name)}`;
       await storageRequest(request, path, { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream", "x-upsert": "false" }, body: await file.arrayBuffer() });
       uploadedPaths.push(path);
-      metadata.push({ post_id: postId, company_id: access.companyId, file_url: path, original_file_url: path, file_name: file.name, file_type: file.type || "application/octet-stream", file_size: file.size, mime_type: file.type || "application/octet-stream", order_index: index, uploaded_by: access.actor.id });
+      sharedFiles.push({ company_id: access.companyId, file_url: path, original_file_url: path, file_name: file.name, file_type: file.type || "application/octet-stream", file_size: file.size, mime_type: file.type || "application/octet-stream", order_index: index, uploaded_by: access.actor.id });
     }
+    const metadata = postIds.flatMap((postId) => sharedFiles.map((file) => ({ ...file, post_id: postId })));
     if (metadata.length) await restRequest(request, "post_files", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(metadata) });
-    return Response.json({ id: postId, created: true }, { status: 201 });
+    return Response.json({ id: postIds[0], ids: postIds, created: true, createdCount: postIds.length }, { status: 201 });
   } catch (error) {
     for (const path of uploadedPaths) { try { await storageRequest(request, path, { method: "DELETE" }); } catch {} }
-    if (postId) { try { await restRequest(request, `scheduled_posts?id=eq.${encodeURIComponent(postId)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } }); } catch {} }
+    if (postIds.length) { try { await restRequest(request, `scheduled_posts?id=in.(${postIds.join(",")})`, { method: "DELETE", headers: { Prefer: "return=minimal" } }); } catch {} }
     return jsonError(error);
   }
 }
