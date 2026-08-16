@@ -420,8 +420,8 @@
 
   function openBootstrapOwner() {
     var html = modalHead('Configurar proprietário da Óriva') + '<form onsubmit="bootstrapOwner(event)"><div class="modal-body"><div class="form-grid">' +
-      field('Seu nome completo', '<input name="name" required autocomplete="name">') +
-      field('E-mail do proprietário', '<input name="email" type="email" required autocomplete="email">') +
+      field('Seu nome completo', '<input name="name" required value="Ramon da Costa Ribeiro">') +
+      field('E-mail do proprietário', '<input name="email" type="email" required value="ramonvalnei3@gmail.com">') +
       field('Crie sua senha', '<input name="password" type="password" minlength="8" required autocomplete="new-password">', false, 'Use pelo menos 8 caracteres. A senha fica somente no Supabase Auth.') +
       '</div></div><div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeManagementModal()">Cancelar</button><button type="submit" class="btn btn-primary">Criar minha conta</button></div></form>';
     showModal(html, false);
@@ -908,7 +908,7 @@
     window.setTimeout(function () { loadFinance(''); }, 0);
     return '<div class="page-head"><div><h1 class="page-title">Financeiro</h1><p class="page-desc">Mensalidades, receitas, contas a pagar e fluxo de caixa</p></div>' +
       '<div class="management-actions"><button class="btn btn-ghost" onclick="goToDelinquency()">Inadimplência</button><button class="btn btn-ghost" onclick="exportFinanceCsv()">Exportar CSV</button><button class="btn btn-ghost" onclick="openFinanceForm(\'receita\',\'Mensalidade\')">+ Mensalidade</button><button class="btn btn-primary" onclick="openFinanceForm()">+ Novo lançamento</button></div></div>' +
-      '<div class="content-toolbar"><label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700">Filtrar por mês <input id="finance-month" type="month" value="" onchange="loadFinance(this.value)"></label><button class="btn btn-ghost" onclick="showFinancePanorama()">Todos os períodos</button><span id="finance-period-label" class="toolbar-note">Panorama financeiro completo</span><button class="btn btn-ghost" onclick="openFinanceForm(\'despesa\')">+ Conta a pagar</button></div>' +
+      '<div class="content-toolbar"><label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700">Filtrar por mês <input id="finance-month" type="month" value="" onchange="loadFinance(this.value)"></label><button class="btn btn-ghost" onclick="showFinancePanorama()">Todos os períodos</button><span id="finance-period-label" class="toolbar-note">Panorama financeiro completo</span><button class="btn btn-ghost" onclick="openFinanceForm(\'receita\')">+ Receita</button><button class="btn btn-ghost" onclick="openFinanceForm(\'despesa\')">+ Conta a pagar</button></div>' +
       loading('finance-area', 'Carregando lançamentos...');
   };
 
@@ -947,32 +947,60 @@
     var totalIncome = income.reduce(function (sum, item) { return sum + Number(item.amountCents || 0); }, 0);
     var totalExpense = expense.reduce(function (sum, item) { return sum + Number(item.amountCents || 0); }, 0);
     var receivable = income.filter(function (item) { return item.status !== 'Pago' && item.status !== 'Cancelado'; }).reduce(function (sum, item) { return sum + Number(item.amountCents || 0); }, 0);
+    var received = income.filter(function (item) { return item.status === 'Pago'; }).reduce(function (sum, item) { return sum + Number(item.amountCents || 0); }, 0);
     var payable = expense.filter(function (item) { return item.status !== 'Pago' && item.status !== 'Cancelado'; }).reduce(function (sum, item) { return sum + Number(item.amountCents || 0); }, 0);
+    var paidExpenses = expense.filter(function (item) { return item.status === 'Pago'; }).reduce(function (sum, item) { return sum + Number(item.amountCents || 0); }, 0);
     var overdueTotal = state.delinquent.reduce(function (sum, item) { return sum + Number(item.amountCents || 0); }, 0);
     var periodSuffix = state.financePeriod ? ' do período' : ' totais';
-    var summary = '<div class="grid g-3" style="margin-bottom:18px">' + kpi('trend', money(totalIncome), 'Receitas' + periodSuffix) + kpi('clock', money(totalExpense), 'Despesas' + periodSuffix) + kpi('financeiro', money(receivable), 'A receber') + kpi('clock', money(payable), 'A pagar') + kpi('check', money(totalIncome - totalExpense), 'Saldo geral') + kpi('clientes', money(overdueTotal), 'Total inadimplente') + '</div>';
+    var summary = '<div class="grid g-3" style="margin-bottom:18px">' + kpi('trend', money(totalIncome), 'Receitas' + periodSuffix) + kpi('clock', money(totalExpense), 'Despesas' + periodSuffix) + kpi('financeiro', money(receivable), 'A receber') + kpi('check', money(received), 'Recebido') + kpi('clock', money(payable), 'A pagar') + kpi('check', money(paidExpenses), 'Já pago') + kpi('check', money(totalIncome - totalExpense), 'Saldo geral') + kpi('clientes', money(overdueTotal), 'Total inadimplente') + '</div>';
     if (!state.finance.length) {
       area.innerHTML = summary + empty(state.financePeriod ? 'Nenhum lançamento neste mês' : 'Nenhum lançamento financeiro', 'Adicione uma mensalidade, receita ou conta a pagar.', '<button class="btn btn-primary" onclick="openFinanceForm()">Criar lançamento</button>') + renderDelinquency();
       return;
     }
     area.innerHTML = summary + '<div class="tbl-wrap"><table><thead><tr><th>Descrição</th><th>Tipo</th><th>Vencimento</th><th>Valor</th><th>Situação</th><th>Ações</th></tr></thead><tbody>' + state.finance.map(function (entry) {
       var overdue = entry.status === 'Pendente' && entry.dueDate < new Date().toISOString().slice(0, 10);
-      var displayStatus = overdue ? 'Atrasado' : entry.status;
+      var displayStatus = overdue ? 'Atrasado' : financeStatusLabel(entry.kind, entry.status);
       return '<tr data-search="' + esc([entry.description, entry.partyName, entry.category, displayStatus].join(' ')) + '"><td><div style="font-weight:700">' + esc(entry.description) + '</div><div class="li-sub">' + esc(entry.partyName || entry.category) + ' · ' + esc(entry.recurrence) + '</div></td>' +
         '<td><span class="tag ' + (entry.kind === 'receita' ? 'tag-verde' : 'tag-vermelho') + '">' + (entry.kind === 'receita' ? 'Receita' : 'Despesa') + '</span></td><td>' + esc(dateBR(entry.dueDate)) + '</td><td style="font-weight:800">' + money(entry.amountCents) + '</td>' +
-        '<td><span class="tag ' + (displayStatus === 'Pago' ? 'tag-verde' : displayStatus === 'Atrasado' ? 'tag-vermelho' : 'tag-amarelo') + '">' + esc(displayStatus) + '</span></td>' +
-        '<td><div class="management-actions">' + (entry.status !== 'Pago' ? '<button class="btn-xs" onclick="markFinancePaid(\'' + esc(entry.id) + '\')">Marcar pago</button>' : '') + '<button class="btn-xs" onclick="openFinanceForm(null,null,\'' + esc(entry.id) + '\')">Editar</button><button class="btn-xs" style="color:var(--vermelho)" onclick="deleteFinance(\'' + esc(entry.id) + '\')">Excluir</button></div></td></tr>';
+        '<td><span class="tag ' + (entry.status === 'Pago' ? 'tag-verde' : displayStatus === 'Atrasado' ? 'tag-vermelho' : 'tag-amarelo') + '">' + esc(displayStatus) + '</span></td>' +
+        '<td><div class="management-actions">' + (entry.status !== 'Pago' ? '<button class="btn-xs" onclick="markFinancePaid(\'' + esc(entry.id) + '\')">' + (entry.kind === 'receita' ? 'Marcar recebido' : 'Marcar pago') + '</button>' : '') + '<button class="btn-xs" onclick="openFinanceForm(null,null,\'' + esc(entry.id) + '\')">Editar</button><button class="btn-xs" style="color:var(--vermelho)" onclick="deleteFinance(\'' + esc(entry.id) + '\')">Excluir</button></div></td></tr>';
     }).join('') + '</tbody></table></div>' + renderDelinquency();
   }
 
   function renderDelinquency() {
     var total = state.delinquent.reduce(function (sum, entry) { return sum + Number(entry.amountCents || 0); }, 0);
     return '<section id="delinquency-section" class="card delinquency-card"><div class="card-h"><div><h3>Clientes inadimplentes</h3><p class="page-desc">Receitas vencidas e ainda não pagas, em todos os meses.</p></div><span class="tag ' + (state.delinquent.length ? 'tag-vermelho' : 'tag-verde') + '">' + state.delinquent.length + ' pendência' + (state.delinquent.length === 1 ? '' : 's') + '</span></div>' +
-      (state.delinquent.length ? '<div class="delinquency-total">Total vencido: <b>' + money(total) + '</b></div><div class="file-list">' + state.delinquent.map(function (entry) { return '<div class="file-row delinquent-row"><div class="file-main"><b>' + esc(entry.partyName || entry.description) + '</b><span>' + esc(entry.description) + ' · venceu em ' + esc(dateBR(entry.dueDate)) + '</span></div><div class="management-actions"><strong>' + money(entry.amountCents) + '</strong><button class="btn-xs" onclick="markFinancePaid(\'' + esc(entry.id) + '\')">Marcar pago</button></div></div>'; }).join('') + '</div>' : '<div class="management-inline-empty">Nenhum cliente inadimplente no momento.</div>') + '</section>';
+      (state.delinquent.length ? '<div class="delinquency-total">Total vencido: <b>' + money(total) + '</b></div><div class="file-list">' + state.delinquent.map(function (entry) { return '<div class="file-row delinquent-row"><div class="file-main"><b>' + esc(entry.partyName || entry.description) + '</b><span>' + esc(entry.description) + ' · venceu em ' + esc(dateBR(entry.dueDate)) + '</span></div><div class="management-actions"><strong>' + money(entry.amountCents) + '</strong><button class="btn-xs" onclick="markFinancePaid(\'' + esc(entry.id) + '\')">Marcar recebido</button></div></div>'; }).join('') + '</div>' : '<div class="management-inline-empty">Nenhum cliente inadimplente no momento.</div>') + '</section>';
   }
 
   function goToDelinquency() { var section = document.getElementById('delinquency-section'); if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   window.goToDelinquency = goToDelinquency;
+
+  function financeStatusChoices(kind) {
+    var income = kind === 'receita';
+    return [
+      { value: 'Pendente', label: income ? 'A receber' : 'A pagar' },
+      { value: 'Atrasado', label: 'Atrasado' },
+      { value: 'Pago', label: income ? 'Recebido' : 'Já pago' },
+      { value: 'Cancelado', label: 'Cancelado' }
+    ];
+  }
+
+  function financeStatusLabel(kind, status) {
+    if (status === 'Pendente') return kind === 'receita' ? 'A receber' : 'A pagar';
+    if (status === 'Pago') return kind === 'receita' ? 'Recebido' : 'Já pago';
+    return status;
+  }
+
+  function syncFinanceStatusLabels(form) {
+    if (!form) return;
+    var kindField = form.querySelector('[name="kind"]');
+    var statusField = form.querySelector('[name="status"]');
+    if (!kindField || !statusField) return;
+    var current = statusField.value || 'Pendente';
+    statusField.innerHTML = options(financeStatusChoices(kindField.value), current);
+  }
+  window.syncFinanceStatusLabels = syncFinanceStatusLabels;
 
   function openFinanceForm(kind, category, id) {
     var entry = state.finance.find(function (item) { return item.id === id; });
@@ -981,14 +1009,14 @@
     var today = new Date().toISOString().slice(0, 10);
     var companyOptions = state.companies.map(function (company) { return { value: company.id, label: company.name }; });
     var html = modalHead(entry ? 'Editar lançamento' : 'Novo lançamento financeiro') + '<form onsubmit="saveFinance(event,\'' + esc(id || '') + '\')"><div class="modal-body"><div class="form-grid">' +
-      field('Tipo', '<select name="kind">' + options([{ value: 'receita', label: 'Receita / valor a receber' }, { value: 'despesa', label: 'Despesa / conta a pagar' }], selectedKind) + '</select>') +
+      field('Tipo', '<select name="kind" onchange="syncFinanceStatusLabels(this.form)">' + options([{ value: 'receita', label: 'Receita / valor a receber' }, { value: 'despesa', label: 'Despesa / conta a pagar' }], selectedKind) + '</select>') +
       field('Categoria', '<select name="category">' + options(['Mensalidade', 'Parceiro', 'Operacional', 'Pró-labore', 'Imposto', 'Outro'], selectedCategory) + '</select>') +
       field('Descrição', '<input name="description" required value="' + esc(entry ? entry.description : '') + '" placeholder="Ex.: Mensalidade de agosto">') +
       field('Empresa / favorecido', '<input name="partyName" value="' + esc(entry ? entry.partyName : '') + '" placeholder="Nome relacionado ao lançamento">') +
       field('Empresa vinculada', '<select name="companyId">' + options(companyOptions, entry ? entry.companyId : '', 'Sem vínculo') + '</select>') +
       field('Valor (R$)', '<input name="amount" required inputmode="decimal" value="' + esc(entry ? (entry.amountCents / 100).toFixed(2).replace('.', ',') : '') + '">') +
       field('Vencimento', '<input name="dueDate" type="date" required value="' + esc(entry ? entry.dueDate : today) + '">') +
-      field('Situação', '<select name="status">' + options(['Pendente', 'Atrasado', 'Pago', 'Cancelado'], entry ? entry.status : 'Pendente') + '</select>') +
+      field('Situação', '<select name="status">' + options(financeStatusChoices(selectedKind), entry ? entry.status : 'Pendente') + '</select>') +
       field('Recorrência', '<select name="recurrence">' + options(['Único', 'Mensal'], entry ? entry.recurrence : (selectedCategory === 'Mensalidade' ? 'Mensal' : 'Único')) + '</select>') +
       field('Observações', '<textarea name="notes">' + esc(entry ? entry.notes : '') + '</textarea>', true) + '</div></div>' +
       '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeManagementModal()">Cancelar</button><button class="btn btn-primary" type="submit">Salvar lançamento</button></div></form>';
@@ -1009,7 +1037,7 @@
   async function markFinancePaid(id) {
     var entry = state.finance.find(function (item) { return item.id === id; }); if (!entry) return;
     var data = Object.assign({}, entry, { status: 'Pago', paidDate: new Date().toISOString().slice(0, 10) });
-    try { await api('/api/finance/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); toast('Pagamento registrado.'); await loadFinance(document.getElementById('finance-month').value || ''); } catch (error) { toast(error.message, true); }
+    try { await api('/api/finance/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); toast(entry.kind === 'receita' ? 'Recebimento registrado.' : 'Pagamento registrado.'); await loadFinance(document.getElementById('finance-month').value || ''); } catch (error) { toast(error.message, true); }
   }
   window.markFinancePaid = markFinancePaid;
 
