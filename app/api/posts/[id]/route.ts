@@ -72,8 +72,14 @@ export async function DELETE(request: Request, context: Context) {
     const { id } = await context.params; const url = new URL(request.url); const access = await requireCompany(request, url.searchParams.get("tenant_id"));
     if (!access.isAgency) return Response.json({ error: "Somente a agência pode excluir conteúdos." }, { status: 403 });
     const files = await restRequest<Array<Record<string, unknown>>>(request, `post_files?post_id=eq.${encodeURIComponent(id)}&company_id=eq.${encodeURIComponent(access.companyId)}&select=file_url`);
-    for (const file of files) { try { await storageRequest(request, String(file.file_url), { method: "DELETE" }); } catch {} }
     await restRequest(request, `scheduled_posts?id=eq.${encodeURIComponent(id)}&company_id=eq.${encodeURIComponent(access.companyId)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+    const paths = Array.from(new Set(files.map((file) => String(file.file_url))));
+    for (const path of paths) {
+      try {
+        const references = await restRequest<Array<Record<string, unknown>>>(request, `post_files?file_url=eq.${encodeURIComponent(path)}&select=id&limit=1`);
+        if (!references.length) await storageRequest(request, path, { method: "DELETE" });
+      } catch {}
+    }
     return Response.json({ deleted: true });
   } catch (error) { return jsonError(error); }
 }
