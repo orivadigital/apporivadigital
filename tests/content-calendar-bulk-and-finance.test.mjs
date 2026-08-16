@@ -37,6 +37,16 @@ test("selected and persisted content files can be removed safely", async () => {
   assert.match(postRoute, /if \(!references\.length\) await storageRequest/);
 });
 
+test("calendar post policies support returning rows and shared files", async () => {
+  const migration = await read("supabase/migrations/20260816221500_fix_calendar_post_creation_rls.sql");
+
+  assert.match(migration, /private\.can_manage_agency\(\)\s+or private\.can_view_post_item\(id\)/);
+  assert.match(migration, /drop constraint if exists post_files_file_url_key/);
+  assert.match(migration, /unique index if not exists post_files_post_file_url_uidx[\s\S]*\(post_id, file_url\)/);
+  assert.match(migration, /sp\.company_id = post_files\.company_id/);
+  assert.match(migration, /private\.can_upload_storage_object\(name\)\s+or private\.can_view_storage_object\(name\)/);
+});
+
 test("leads are excluded from content calendars in the interface and API", async () => {
   const [calendar, route] = await Promise.all([
     read("public/content-calendar.js"),
