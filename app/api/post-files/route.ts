@@ -93,7 +93,8 @@ export async function DELETE(request: Request) {
     if (!administrator && String(file.uploaded_by ?? "") !== actor.id) {
       return Response.json({ error: "Você só pode excluir arquivos enviados pelo seu próprio perfil." }, { status: 403 });
     }
-    await storageRequest(request, String(file.file_url), { method: "DELETE" });
+    const references = await restRequest<Array<Record<string, unknown>>>(request, `post_files?file_url=eq.${encodeURIComponent(String(file.file_url))}&select=id&limit=2`);
+    if (references.length <= 1) await storageRequest(request, String(file.file_url), { method: "DELETE" });
     await restRequest(request, `post_files?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
     return Response.json({ deleted: true });
   } catch (error) { return jsonError(error); }
