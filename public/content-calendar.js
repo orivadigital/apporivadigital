@@ -556,6 +556,79 @@
   }
   window.clearPendingContentFiles = clearPendingContentFiles;
 
+  async function cleanupDirectContentUploads(prepared, postId) {
+    if (!prepared || !prepared.uploads || !prepared.uploads.length) return;
+    try {
+      await apiJson('/api/post-upload-signatures', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: prepared.companyId || contentState.tenantId,
+          postId: postId || '',
+          paths: prepared.uploads.map(function (upload) { return upload.path; })
+        })
+      });
+    } catch (ignored) {}
+  }
+
+  function contentFileMimeType(file) {
+    if (file.type) return file.type;
+    var extension = String(file.name || '').split('.').pop().toLowerCase();
+    var known = {
+      jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+      webp: 'image/webp', heic: 'image/heic', heif: 'image/heif', svg: 'image/svg+xml',
+      mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', m4v: 'video/x-m4v',
+      pdf: 'application/pdf'
+    };
+    return known[extension] || 'application/octet-stream';
+  }
+
+  async function uploadContentFilesDirect(files, postId, button) {
+    var descriptors = files.map(function (file) {
+      return { name: file.name, type: contentFileMimeType(file), size: file.size };
+    });
+    var prepared = await apiJson('/api/post-upload-signatures', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: contentState.tenantId, postId: postId || '', files: descriptors })
+    });
+    try {
+      for (var index = 0; index < files.length; index += 1) {
+        if (button) button.textContent = 'Enviando arquivo ' + (index + 1) + ' de ' + files.length + '...';
+        var upload = prepared.uploads[index];
+        if (!upload || !upload.signedUrl) throw new Error('Não foi possível preparar o envio de todos os arquivos.');
+        var uploadBody = new FormData();
+        uploadBody.append('cacheControl', '3600');
+        uploadBody.append('', files[index], files[index].name);
+        var response = await fetch(upload.signedUrl, {
+          method: 'PUT',
+          headers: { 'x-upsert': 'false' },
+          body: uploadBody
+        });
+        if (!response.ok) {
+          throw new Error('Não foi possível enviar o arquivo ' + (index + 1) + '. Verifique sua conexão e tente novamente.');
+        }
+      }
+      return prepared;
+    } catch (error) {
+      await cleanupDirectContentUploads(prepared, postId);
+      throw error;
+    }
+  }
+
+  function uploadedFileMetadata(prepared) {
+    return (prepared && prepared.uploads || []).map(function (upload) {
+      return {
+        path: upload.path,
+        fileName: upload.fileName,
+        fileType: upload.fileType,
+        fileSize: upload.fileSize,
+        mimeType: upload.mimeType,
+        orderIndex: upload.orderIndex
+      };
+    });
+  }
+
   function agencyContentFileRows(post) {
     return (post.files || []).map(function (file) {
       return '<div class="file-row"><div class="file-main"><b>' + esc(file.fileName) + '</b><span>' + esc(formatBytes(file.fileSize)) + '</span></div><div class="management-actions">' +
@@ -620,6 +693,7 @@
     var form = event.currentTarget;
     var button = document.getElementById('save-content-button');
     var createdCount = 0;
+    var preparedUploads = null;
     button.disabled = true;
     button.textContent = 'Salvando...';
     try {
@@ -645,24 +719,50 @@
         });
       } else {
         var createData = new FormData(form);
-        createData.delete('files');
-        contentState.pendingFiles.forEach(function (file) { createData.append('files', file); });
         if (!contentState.pendingFiles.length) throw new Error('Selecione pelo menos um arquivo para o conteúdo.');
-        createData.append('tenant_id', contentState.tenantId);
-        var created = await apiJson('/api/posts', { method: 'POST', body: createData });
+        preparedUploads = await uploadContentFilesDirect(contentState.pendingFiles, '', button);
+        button.textContent = 'Criando conteúdo...';
+        var dates = createData.getAll('scheduled_date');
+        var descriptions = createData.getAll('schedule_description');
+        var created = await apiJson('/api/posts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId: contentState.tenantId,
+            title: createData.get('title'),
+            contentType: createData.get('content_type'),
+            socialNetwork: createData.get('social_network'),
+            scheduledTime: createData.get('scheduled_time'),
+            caption: createData.get('caption'),
+            clientNotes: createData.get('client_notes'),
+            internalNotes: createData.get('internal_notes'),
+            status: createData.get('status'),
+            assignedTo: createData.get('assigned_to'),
+            schedules: dates.map(function (date, index) {
+              return { date: date, description: descriptions[index] || '' };
+            }),
+            uploadedFiles: uploadedFileMetadata(preparedUploads)
+          })
+        });
         createdCount = Number(created.createdCount || 1);
+        preparedUploads = null;
       }
       if (postId && contentState.pendingFiles.length) {
-        var upload = new FormData();
-        upload.append('post_id', postId);
-        contentState.pendingFiles.forEach(function (file) { upload.append('files', file); });
-        await apiJson('/api/post-files', { method: 'POST', body: upload });
+        preparedUploads = await uploadContentFilesDirect(contentState.pendingFiles, postId, button);
+        button.textContent = 'Vinculando arquivos...';
+        await apiJson('/api/post-files', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ postId: postId, uploadedFiles: uploadedFileMetadata(preparedUploads) })
+        });
+        preparedUploads = null;
       }
       closeContentModal();
       if (postId) showToast('Conteúdo atualizado com sucesso.');
       else showToast(createdCount > 1 ? createdCount + ' conteúdos foram criados no calendário.' : 'Conteúdo salvo no calendário.');
       await loadContentPosts();
     } catch (error) {
+      await cleanupDirectContentUploads(preparedUploads, postId);
       showToast(error.message, true);
       button.disabled = false;
       button.textContent = postId ? 'Salvar alterações' : 'Salvar conteúdo';
@@ -705,6 +805,7 @@
     var form = event.currentTarget;
     var button = document.getElementById('save-assigned-content-button');
     if (button) { button.disabled = true; button.textContent = 'Salvando...'; }
+    var preparedUploads = null;
     try {
       var data = new FormData(form);
       await apiJson('/api/posts/' + encodeURIComponent(id), {
@@ -714,15 +815,20 @@
       });
       var files = data.getAll('files').filter(function (file) { return file && file.size > 0; });
       if (files.length) {
-        var upload = new FormData();
-        upload.append('post_id', id);
-        files.forEach(function (file) { upload.append('files', file); });
-        await apiJson('/api/post-files', { method: 'POST', body: upload });
+        preparedUploads = await uploadContentFilesDirect(files, id, button);
+        if (button) button.textContent = 'Vinculando arquivos...';
+        await apiJson('/api/post-files', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ postId: id, uploadedFiles: uploadedFileMetadata(preparedUploads) })
+        });
+        preparedUploads = null;
       }
       closeContentModal();
       showToast(files.length ? 'Conteúdo atualizado e materiais anexados.' : 'Conteúdo atualizado com sucesso.');
       await loadContentPosts();
     } catch (error) {
+      await cleanupDirectContentUploads(preparedUploads, id);
       showToast(error.message, true);
       if (button) { button.disabled = false; button.textContent = 'Salvar atualização'; }
     }

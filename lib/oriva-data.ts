@@ -393,6 +393,27 @@ export async function storageJsonRequest<T = unknown>(
   return payload as T;
 }
 
+export async function createSignedStorageUpload(request: Request, path: string) {
+  const payload = await storageJsonRequest<Record<string, unknown>>(
+    request,
+    `object/upload/sign/oriva-files/${encodeStoragePath(path)}`,
+    {
+      method: "POST",
+      headers: { "x-upsert": "false" },
+      body: JSON.stringify({}),
+    },
+  );
+  const relativeUrl = String(payload.url ?? "").trim();
+  if (!relativeUrl) {
+    throw Response.json({ error: "Não foi possível preparar o envio do arquivo." }, { status: 502 });
+  }
+  const config = await getConfig();
+  const signedUrl = relativeUrl.startsWith("http://") || relativeUrl.startsWith("https://")
+    ? relativeUrl
+    : `${config.url}/storage/v1${relativeUrl.startsWith("/") ? "" : "/"}${relativeUrl}`;
+  return { path, signedUrl };
+}
+
 export function encodeStoragePath(path: string) {
   return path.split("/").map(encodeURIComponent).join("/");
 }

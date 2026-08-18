@@ -31,8 +31,10 @@ export async function POST(request: Request) {
   try {
     const actor = await getActor(request);
     if (!canWorkWithAssignedContent(actor.role)) return Response.json({ error: "Seu perfil não pode anexar materiais a conteúdos." }, { status: 403 });
-    const form = await request.formData();
-    const postId = String(form.get("post_id") ?? "").trim();
+    const isJson = (request.headers.get("content-type") ?? "").includes("application/json");
+    const body = isJson ? await request.json() as Record<string, unknown> : null;
+    const form = isJson ? null : await request.formData();
+    const postId = String(body?.postId ?? form?.get("post_id") ?? "").trim();
     if (!postId) return Response.json({ error: "Conteúdo não informado." }, { status: 400 });
     const posts = await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?id=eq.${encodeURIComponent(postId)}&select=id,company_id,assigned_to&limit=1`);
     const post = posts[0];
@@ -40,8 +42,11 @@ export async function POST(request: Request) {
     if (["colaborador", "parceiro"].includes(actor.role) && String(post.assigned_to ?? "") !== actor.id) {
       return Response.json({ error: "Este conteúdo não está atribuído ao seu perfil." }, { status: 403 });
     }
-    const files = form.getAll("files").filter((value): value is File => typeof value !== "string" && value.size > 0 && Boolean(value.name));
-    if (!files.length) return Response.json({ error: "Selecione pelo menos um arquivo." }, { status: 400 });
+    const files = form
+      ? form.getAll("files").filter((value): value is File => typeof value !== "string" && value.size > 0 && Boolean(value.name))
+      : [];
+    const directFiles = isJson && Array.isArray(body?.uploadedFiles) ? body.uploadedFiles : [];
+    if (!files.length && !directFiles.length) return Response.json({ error: "Selecione pelo menos um arquivo." }, { status: 400 });
     if (files.length > 20) return Response.json({ error: "Envie no máximo 20 arquivos por vez." }, { status: 400 });
     const lastRows = await restRequest<Array<Record<string, unknown>>>(request, `post_files?post_id=eq.${encodeURIComponent(postId)}&select=order_index&order=order_index.desc&limit=1`);
     const startOrder = Number(lastRows[0]?.order_index ?? -1) + 1;
@@ -69,12 +74,38 @@ export async function POST(request: Request) {
         uploaded_by: actor.id,
       });
     }
-    const rows = await restRequest<Array<Record<string, unknown>>>(request, "post_files", {
+
+    if (directFiles.length > 20) return Response.json({ error: "Envie no máximo 20 arquivos por vez." }, { status: 400 });
+    for (let index = 0; index < directFiles.length; index += 1) {
+      const raw = directFiles[index] && typeof directFiles[index] === "object"
+        ? directFiles[index] as Record<string, unknown>
+        : {};
+      const path = String(raw.path ?? "").trim();
+      const fileName = String(raw.fileName ?? "").trim();
+      const mimeType = String(raw.mimeType ?? raw.fileType ?? "").trim().toLowerCase();
+      const fileSize = Number(raw.fileSize ?? 0);
+      const orderIndex = Number(raw.orderIndex ?? startOrder + index);
+      const prefix = `companies/${post.company_id}/posts/${postId}/original/`;
+      if (!path.startsWith(prefix) || path.includes("..") || !fileName || !Number.isFinite(fileSize) || fileSize < 1 || !Number.isInteger(orderIndex) || orderIndex < 0) {
+        throw new Error("Um ou mais arquivos enviados são inválidos.");
+      }
+      uploaded.push(path);
+      metadata.push({
+        file_url: path,
+        original_file_url: path,
+        file_name: fileName,
+        file_type: mimeType,
+        file_size: fileSize,
+        mime_type: mimeType,
+        order_index: orderIndex,
+      });
+    }
+
+    await restRequest(request, "rpc/attach_scheduled_post_files", {
       method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify(metadata),
+      body: JSON.stringify({ p_post_id: postId, p_files: metadata }),
     });
-    return Response.json({ created: rows.length }, { status: 201 });
+    return Response.json({ created: metadata.length }, { status: 201 });
   } catch (error) {
     for (const path of uploaded) { try { await storageRequest(request, path, { method: "DELETE" }); } catch {} }
     return jsonError(error);
