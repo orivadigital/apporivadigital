@@ -5,6 +5,7 @@
     posts: [],
     companies: [],
     team: [],
+    partners: [],
     tenantId: '',
     clientMode: false,
     restrictedMode: false,
@@ -199,9 +200,15 @@
         try {
           var accessPayload = await apiJson('/api/access');
           contentState.team = (accessPayload.accesses || []).filter(function (access) {
-            return access.role === 'agency_owner' || access.role === 'agency_member' || access.role === 'collaborator' || access.role === 'partner';
+            return access.status === 'Ativo' && (access.role === 'agency_owner' || access.role === 'agency_member' || access.role === 'collaborator');
           });
-        } catch (ignored) { contentState.team = []; }
+          var activePartnerIds = new Set((accessPayload.accesses || []).filter(function (access) {
+            return access.status === 'Ativo' && access.role === 'partner' && access.partnerId;
+          }).map(function (access) { return access.partnerId; }));
+          contentState.partners = (accessPayload.partners || []).filter(function (partner) {
+            return partner.status === 'ativo' && activePartnerIds.has(partner.id);
+          });
+        } catch (ignored) { contentState.team = []; contentState.partners = []; }
       }
       if (contentState.companies.length && !contentState.companies.some(function (company) {
         return company.id === contentState.tenantId;
@@ -647,7 +654,10 @@
     var editing = Boolean(post);
     contentState.pendingFiles = [];
     var today = dateKey(new Date());
-    var teamOptions = contentState.team.map(function (person) { return { value: person.id, label: (person.role === 'partner' ? 'Parceiro · ' : '') + (person.name || person.email) }; });
+    var teamOptions = contentState.team.map(function (person) { return { value: person.id, label: person.name || person.email }; });
+    var partnerOptions = contentState.partners.map(function (partner) {
+      return { value: partner.id, label: partner.name + (partner.specialty ? ' · ' + partner.specialty : '') };
+    });
     var planningFields = [
       formField('Título do conteúdo', '<input name="title" required maxlength="120" value="' + esc(post ? post.title : '') + '" placeholder="Ex.: Carrossel de lançamento">', true),
       formField('Tipo de conteúdo', '<select name="content_type" required>' + options(contentTypes, post ? post.contentType : 'Post') + '</select>'),
@@ -664,7 +674,8 @@
     ];
     var workflowFields = [
       formField('Situação inicial', '<select name="status" required>' + options(statuses, post ? post.status : 'Rascunho') + '</select>'),
-      formField('Responsável interno', '<select name="assigned_to">' + (function () { var html = '<option value="">Não definido</option>'; return html + teamOptions.map(function (person) { return '<option value="' + esc(person.value) + '"' + (post && post.assignedTo === person.value ? ' selected' : '') + '>' + esc(person.label) + '</option>'; }).join(''); })() + '</select>')
+      formField('Responsável interno', '<select name="assigned_to">' + (function () { var html = '<option value="">Não definido</option>'; return html + teamOptions.map(function (person) { return '<option value="' + esc(person.value) + '"' + (post && post.assignedTo === person.value ? ' selected' : '') + '>' + esc(person.label) + '</option>'; }).join(''); })() + '</select>'),
+      formField('Parceiro responsável', '<select name="partner_id">' + (function () { var html = '<option value="">Sem parceiro atribuído</option>'; return html + partnerOptions.map(function (partner) { return '<option value="' + esc(partner.value) + '"' + (post && post.partnerId === partner.value ? ' selected' : '') + '>' + esc(partner.label) + '</option>'; }).join(''); })() + '</select>', false, 'O parceiro selecionado poderá editar a legenda, atualizar a situação e anexar materiais. Esta atribuição não fica visível para o cliente.')
     ];
     if (!editing) {
       workflowFields.push(formField(
@@ -710,7 +721,8 @@
           clientNotes: formData.get('client_notes'),
           internalNotes: formData.get('internal_notes'),
           status: formData.get('status'),
-          assignedTo: formData.get('assigned_to')
+          assignedTo: formData.get('assigned_to'),
+          partnerId: formData.get('partner_id')
         };
         await apiJson('/api/posts/' + encodeURIComponent(postId), {
           method: 'PATCH',
@@ -739,6 +751,7 @@
             internalNotes: createData.get('internal_notes'),
             status: createData.get('status'),
             assignedTo: createData.get('assigned_to'),
+            partnerId: createData.get('partner_id'),
             schedules: dates.map(function (date, index) {
               return { date: date, description: descriptions[index] || '' };
             }),
@@ -909,6 +922,17 @@
       '<button class="btn btn-ghost" onclick="openContentForm(\'' + esc(post.id) + '\')">Editar</button>',
       '<button class="btn btn-ghost" style="color:var(--vermelho)" onclick="deleteContent(\'' + esc(post.id) + '\')">Excluir</button>'
     ].join('') : contentState.permissions.canEditAssigned ? '<button class="btn btn-primary" onclick="openAssignedContentForm(\'' + esc(post.id) + '\')">Atualizar e anexar materiais</button>' : '';
+    var responsibilityDetails = '';
+    if (contentState.permissions.canManage) {
+      var internalResponsible = contentState.team.find(function (person) { return person.id === post.assignedTo; });
+      var partnerResponsible = contentState.partners.find(function (partner) { return partner.id === post.partnerId; });
+      responsibilityDetails = '<div class="detail-row"><div class="detail-label">Responsável interno</div><div class="detail-value">' + esc(internalResponsible ? internalResponsible.name : 'Não definido') + '</div></div>' +
+        '<div class="detail-row"><div class="detail-label">Parceiro responsável</div><div class="detail-value">' + esc(partnerResponsible ? partnerResponsible.name : 'Não definido') + '</div></div>';
+    } else if (contentState.permissions.canEditAssigned) {
+      responsibilityDetails = '<div class="detail-row"><div class="detail-label">Atribuição</div><div class="detail-value">Atribuído a você</div></div>';
+    } else if (contentState.clientMode && post.hasResponsible) {
+      responsibilityDetails = '<div class="detail-row"><div class="detail-label">Atendimento</div><div class="detail-value">Equipe Óriva</div></div>';
+    }
     var commentHistory = (post.comments || []).length ? '<div class="detail-row"><div class="detail-label">Histórico de comentários</div>' + post.comments.map(function (comment) { return '<div style="padding:10px 0;border-bottom:1px solid var(--cinza-borda)"><div style="font-size:12px;font-weight:700">' + esc(comment.author) + '</div><div class="detail-value">' + esc(comment.comment) + '</div></div>'; }).join('') + '</div>' : '';
     var html = modalHeader(post.title) +
       '<div class="modal-body"><div class="detail-grid">' +
@@ -922,7 +946,7 @@
         (contentState.permissions.canManage ? '<div class="detail-row"><div class="detail-label">Observações internas</div><div class="detail-value">' + esc(post.internalNotes || 'Sem observações.') + '</div></div>' : '') +
         (contentState.permissions.canManage && post.clientFeedback ? '<div class="detail-row"><div class="detail-label">Comentário do cliente</div><div class="detail-value">' + esc(post.clientFeedback) + '</div></div>' : '') +
         commentHistory +
-        '<div class="detail-row"><div class="detail-label">Responsável</div><div class="detail-value">' + esc(contentState.permissions.canEditAssigned ? 'Atribuído a você' : (contentState.team.find(function (person) { return person.id === post.assignedTo; }) || {}).name || (contentState.clientMode && post.assignedTo ? 'Equipe Óriva' : 'Não definido')) + '</div></div>' +
+        responsibilityDetails +
         (contentState.clientMode ? '<div class="client-review" style="background:#f8fafc;border-color:#e2e8f0"><b style="font-size:12px">Publicação manual e segura</b><div class="page-desc">Nenhuma senha de rede social é solicitada. Use os arquivos e a legenda acima para publicar na sua própria conta.</div></div>' : '') +
         (contentState.permissions.canEditAssigned ? '<div class="client-review" style="background:#f8fafc;border-color:#e2e8f0"><b style="font-size:12px">Conteúdo sob sua responsabilidade</b><div class="page-desc">Você pode atualizar a descrição, mudar a situação e anexar os materiais para conferência dos sócios.</div></div>' : '') +
         review +

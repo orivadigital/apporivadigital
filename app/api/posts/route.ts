@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 
 function isUuid(value: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 
-function mapPost(row: Record<string, unknown>, files: Array<Record<string, unknown>>, comments: Array<Record<string, unknown>>, isAgency: boolean) {
+function mapPost(row: Record<string, unknown>, files: Array<Record<string, unknown>>, comments: Array<Record<string, unknown>>, isAgency: boolean, canSeeAssignments: boolean) {
   const post: Record<string, unknown> = {
     id: row.id,
     tenantId: row.company_id,
@@ -32,7 +32,7 @@ function mapPost(row: Record<string, unknown>, files: Array<Record<string, unkno
     caption: row.caption ?? "",
     clientNotes: row.client_notes ?? "",
     status: postStatusToUi(row.status),
-    assignedTo: row.assigned_to ?? "",
+    hasResponsible: Boolean(row.assigned_to || row.partner_id),
     clientFeedback: row.client_feedback ?? "",
     createdBy: row.created_by,
     createdAt: row.created_at,
@@ -53,8 +53,38 @@ function mapPost(row: Record<string, unknown>, files: Array<Record<string, unkno
       return { id: comment.id, comment: comment.comment, commentType: comment.comment_type, author: profile?.name ?? "Usuário", createdAt: comment.created_at };
     }),
   };
+  if (canSeeAssignments) {
+    post.assignedTo = row.assigned_to ?? "";
+    post.partnerId = row.partner_id ?? "";
+  }
   if (isAgency) post.internalNotes = row.internal_notes ?? "";
   return post;
+}
+
+async function validateAssignments(request: Request, assignedTo: string, partnerId: string) {
+  if (assignedTo) {
+    if (!isUuid(assignedTo)) throw Response.json({ error: "O responsável interno selecionado é inválido." }, { status: 400 });
+    const profiles = await restRequest<Array<Record<string, unknown>>>(
+      request,
+      `profiles?id=eq.${encodeURIComponent(assignedTo)}&is_active=eq.true&role=in.(super_admin,socio,colaborador)&select=id&limit=1`,
+    );
+    if (!profiles[0]) throw Response.json({ error: "Selecione um responsável interno ativo." }, { status: 400 });
+  }
+  if (partnerId) {
+    if (!isUuid(partnerId)) throw Response.json({ error: "O parceiro responsável selecionado é inválido." }, { status: 400 });
+    const partners = await restRequest<Array<Record<string, unknown>>>(
+      request,
+      `partners?id=eq.${encodeURIComponent(partnerId)}&status=eq.ativo&profile_id=not.is.null&select=id,profile_id&limit=1`,
+    );
+    const profileId = String(partners[0]?.profile_id ?? "");
+    const profiles = profileId ? await restRequest<Array<Record<string, unknown>>>(
+      request,
+      `profiles?id=eq.${encodeURIComponent(profileId)}&role=eq.parceiro&is_active=eq.true&select=id&limit=1`,
+    ) : [];
+    if (!partners[0] || !profiles[0]) {
+      throw Response.json({ error: "Selecione um parceiro ativo que possua acesso ao sistema." }, { status: 400 });
+    }
+  }
 }
 
 export async function GET(request: Request) {
@@ -78,7 +108,11 @@ export async function GET(request: Request) {
       if (!companies[0]) return Response.json({ error: "Empresa não encontrada entre os seus conteúdos atribuídos." }, { status: 404 });
     }
     const params = new URLSearchParams({ company_id: `eq.${companyId}`, select: "*", order: "scheduled_date.asc,scheduled_time.asc,created_at.asc" });
-    if (isAssignedUser) params.set("assigned_to", `eq.${actor.id}`);
+    if (actor.role === "colaborador") params.set("assigned_to", `eq.${actor.id}`);
+    if (actor.role === "parceiro") {
+      if (!actor.partnerId) return Response.json({ error: "Seu perfil ainda não está vinculado a um parceiro." }, { status: 403 });
+      params.set("partner_id", `eq.${actor.partnerId}`);
+    }
     const status = url.searchParams.get("status"); if (status) params.set("status", `eq.${postStatusToDb(status)}`);
     const contentType = url.searchParams.get("content_type"); if (contentType) params.set("content_type", `eq.${contentTypeToDb(contentType)}`);
     const network = url.searchParams.get("social_network"); if (network) params.set("social_network", `eq.${networkToDb(network)}`);
@@ -93,7 +127,7 @@ export async function GET(request: Request) {
     const commentsByPost = new Map<string, Array<Record<string, unknown>>>();
     for (const comment of commentRows) { const key = String(comment.post_id); const current = commentsByPost.get(key) ?? []; current.push(comment); commentsByPost.set(key, current); }
     return Response.json({
-      posts: rows.map((row) => mapPost(row, filesByPost.get(String(row.id)) ?? [], commentsByPost.get(String(row.id)) ?? [], isAgency)),
+      posts: rows.map((row) => mapPost(row, filesByPost.get(String(row.id)) ?? [], commentsByPost.get(String(row.id)) ?? [], isAgency, isAgency || isAssignedUser)),
       tenantId: companyId,
       permissions: {
         canManage: isAgency,
@@ -134,10 +168,12 @@ export async function POST(request: Request) {
       : form!.getAll("schedule_description").map((value) => String(value ?? "").trim());
     const scheduledTime = String(body?.scheduledTime ?? form?.get("scheduled_time") ?? "");
     const assigned = String(body?.assignedTo ?? form?.get("assigned_to") ?? "").trim();
+    const partnerId = String(body?.partnerId ?? form?.get("partner_id") ?? "").trim();
     if (!title || !scheduledDates.length || scheduledDates.some((date) => !date) || !scheduledTime) return Response.json({ error: "Título, todas as datas e horário são obrigatórios." }, { status: 400 });
     if (scheduledDates.length > 31) return Response.json({ error: "Cadastre no máximo 31 datas por vez." }, { status: 400 });
     if (scheduledDates.some((date) => !/^\d{4}-\d{2}-\d{2}$/.test(date))) return Response.json({ error: "Uma das datas programadas é inválida." }, { status: 400 });
     if (!CONTENT_TYPES.includes(contentType) || !NETWORKS.includes(network) || !POST_STATUSES.includes(status)) return Response.json({ error: "Tipo, rede social ou status inválido." }, { status: 400 });
+    await validateAssignments(request, assigned, partnerId);
 
     const defaultCaption = String(body?.caption ?? form?.get("caption") ?? "").trim();
     const basePost = {
@@ -148,7 +184,8 @@ export async function POST(request: Request) {
       internal_notes: String(body?.internalNotes ?? form?.get("internal_notes") ?? "").trim(),
       client_notes: String(body?.clientNotes ?? form?.get("client_notes") ?? "").trim(),
       status,
-      assigned_to: isUuid(assigned) ? assigned : null,
+      assigned_to: assigned || null,
+      partner_id: partnerId || null,
     };
     const rowsToCreate = scheduledDates.map((scheduledDate, index) => ({
       ...basePost,

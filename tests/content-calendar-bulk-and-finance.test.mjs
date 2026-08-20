@@ -97,6 +97,28 @@ test("leads are excluded from content calendars in the interface and API", async
   assert.match(route, /Converta o lead em cliente/);
 });
 
+test("calendar separates the internal owner from the assigned partner and hides that assignment from clients", async () => {
+  const [calendar, posts, postItem, migration] = await Promise.all([
+    read("public/content-calendar.js"),
+    read("app/api/posts/route.ts"),
+    read("app/api/posts/[id]/route.ts"),
+    read("supabase/migrations/20260819143000_calendar_partner_assignment.sql"),
+  ]);
+
+  assert.match(calendar, /name="assigned_to"/);
+  assert.match(calendar, /name="partner_id"/);
+  assert.match(calendar, /Esta atribuição não fica visível para o cliente/);
+  assert.match(calendar, /partnerId: createData\.get\('partner_id'\)/);
+  assert.match(posts, /if \(canSeeAssignments\) \{[\s\S]*post\.partnerId = row\.partner_id/);
+  assert.match(posts, /hasResponsible: Boolean\(row\.assigned_to \|\| row\.partner_id\)/);
+  assert.match(posts, /actor\.role === "parceiro"[\s\S]*params\.set\("partner_id"/);
+  assert.match(postItem, /String\(post\.partner_id \?\? ""\) === actor\.partnerId/);
+  assert.match(migration, /add column if not exists partner_id uuid references public\.partners/);
+  assert.match(migration, /p\.role = 'parceiro'[\s\S]*sp\.partner_id = pa\.id/);
+  assert.match(migration, /new\.assigned_to, new\.partner_id/);
+  assert.match(migration, /create_scheduled_posts_batch[\s\S]*partner_id uuid/);
+});
+
 test("finance distinguishes pending and completed income and expenses", async () => {
   const management = await read("public/management.js");
 

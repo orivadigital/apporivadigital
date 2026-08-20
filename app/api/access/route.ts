@@ -17,7 +17,7 @@ export async function GET(request: Request) {
       request,
       "profiles?select=id,name,email,phone,role,permissions,is_active,created_at,updated_at,company_users(company_id,companies(name))&order=created_at.asc",
     );
-    const partnerRows = await restRequest<Array<Record<string, unknown>>>(request, "partners?select=id,name,specialty,profile_id&order=name.asc");
+    const partnerRows = await restRequest<Array<Record<string, unknown>>>(request, "partners?select=id,name,specialty,status,profile_id&order=name.asc");
     const partnerByProfile = new Map(partnerRows.filter((item) => item.profile_id).map((item) => [String(item.profile_id), item]));
     const accesses = rows.map((row) => {
       const memberships = Array.isArray(row.company_users) ? row.company_users as Array<Record<string, unknown>> : [];

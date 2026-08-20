@@ -20,11 +20,12 @@ export async function PATCH(request: Request, context: Context) {
     const isAgency = actor.role === "super_admin" || actor.role === "socio";
     const isAssignedUser = actor.role === "colaborador" || actor.role === "parceiro";
     if (!isAgency && !isAssignedUser) return Response.json({ error: "Você não pode editar este conteúdo." }, { status: 403 });
-    const rows = await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?id=eq.${encodeURIComponent(id)}&select=id,company_id,assigned_to&limit=1`);
+    const rows = await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?id=eq.${encodeURIComponent(id)}&select=id,company_id,assigned_to,partner_id&limit=1`);
     const post = rows[0];
     if (!post) return Response.json({ error: "Conteúdo não encontrado ou não atribuído ao seu perfil." }, { status: 404 });
 
     const assigned = String(body.assignedTo ?? "").trim();
+    const partnerId = String(body.partnerId ?? "").trim();
     const values: Record<string, unknown> = {};
     if (isAgency) {
       const tenantId = String(body.tenantId ?? post.company_id ?? "").trim();
@@ -50,9 +51,29 @@ export async function PATCH(request: Request, context: Context) {
         if (!POST_STATUSES.includes(status)) return Response.json({ error: "Situação do conteúdo inválida." }, { status: 400 });
         values.status = status;
       }
-      if ("assignedTo" in body) values.assigned_to = isUuid(assigned) ? assigned : null;
+      if ("assignedTo" in body) {
+        if (assigned) {
+          if (!isUuid(assigned)) return Response.json({ error: "O responsável interno selecionado é inválido." }, { status: 400 });
+          const profiles = await restRequest<Array<Record<string, unknown>>>(request, `profiles?id=eq.${encodeURIComponent(assigned)}&is_active=eq.true&role=in.(super_admin,socio,colaborador)&select=id&limit=1`);
+          if (!profiles[0]) return Response.json({ error: "Selecione um responsável interno ativo." }, { status: 400 });
+        }
+        values.assigned_to = assigned || null;
+      }
+      if ("partnerId" in body) {
+        if (partnerId) {
+          if (!isUuid(partnerId)) return Response.json({ error: "O parceiro responsável selecionado é inválido." }, { status: 400 });
+          const partners = await restRequest<Array<Record<string, unknown>>>(request, `partners?id=eq.${encodeURIComponent(partnerId)}&status=eq.ativo&profile_id=not.is.null&select=id,profile_id&limit=1`);
+          const profileId = String(partners[0]?.profile_id ?? "");
+          const profiles = profileId ? await restRequest<Array<Record<string, unknown>>>(request, `profiles?id=eq.${encodeURIComponent(profileId)}&role=eq.parceiro&is_active=eq.true&select=id&limit=1`) : [];
+          if (!partners[0] || !profiles[0]) return Response.json({ error: "Selecione um parceiro ativo que possua acesso ao sistema." }, { status: 400 });
+        }
+        values.partner_id = partnerId || null;
+      }
     } else {
-      if (String(post.assigned_to ?? "") !== actor.id) return Response.json({ error: "Este conteúdo não está atribuído ao seu perfil." }, { status: 403 });
+      const assignedToActor = actor.role === "colaborador"
+        ? String(post.assigned_to ?? "") === actor.id
+        : Boolean(actor.partnerId) && String(post.partner_id ?? "") === actor.partnerId;
+      if (!assignedToActor) return Response.json({ error: "Este conteúdo não está atribuído ao seu perfil." }, { status: 403 });
       if ("caption" in body || "description" in body) values.caption = String(body.caption ?? body.description ?? "").trim();
       if ("status" in body) {
         const status = postStatusToDb(body.status);

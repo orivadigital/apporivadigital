@@ -76,8 +76,10 @@ test("collaborator-sensitive APIs enforce the same restriction on the server", a
   assert.match(taskItem, /actor\.role !== "colaborador" && actor\.role !== "parceiro"/);
   assert.match(taskItem, /Informe a descrição ou a situação/);
   assert.doesNotMatch(taskFiles, /colaborador possui acesso somente para visualização/);
-  assert.match(posts, /if \(isAssignedUser\) params\.set\("assigned_to"/);
-  assert.match(postItem, /String\(post\.assigned_to \?\? ""\) !== actor\.id/);
+  assert.match(posts, /actor\.role === "colaborador"[\s\S]*params\.set\("assigned_to"/);
+  assert.match(posts, /actor\.role === "parceiro"[\s\S]*params\.set\("partner_id"/);
+  assert.match(postItem, /actor\.role === "colaborador"[\s\S]*post\.assigned_to/);
+  assert.match(postItem, /post\.partner_id[\s\S]*actor\.partnerId/);
   assert.match(postFiles, /Este conteúdo não está atribuído ao seu perfil/);
   assert.match(access, /requireAgencyAdministrator\(request\)/);
   assert.match(partners, /requireAgencyAdministrator\(request\)/);

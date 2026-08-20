@@ -36,10 +36,15 @@ export async function POST(request: Request) {
     const form = isJson ? null : await request.formData();
     const postId = String(body?.postId ?? form?.get("post_id") ?? "").trim();
     if (!postId) return Response.json({ error: "Conteúdo não informado." }, { status: 400 });
-    const posts = await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?id=eq.${encodeURIComponent(postId)}&select=id,company_id,assigned_to&limit=1`);
+    const posts = await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?id=eq.${encodeURIComponent(postId)}&select=id,company_id,assigned_to,partner_id&limit=1`);
     const post = posts[0];
     if (!post?.company_id) return Response.json({ error: "Conteúdo não encontrado ou não atribuído ao seu perfil." }, { status: 404 });
-    if (["colaborador", "parceiro"].includes(actor.role) && String(post.assigned_to ?? "") !== actor.id) {
+    const assignedToActor = actor.role === "colaborador"
+      ? String(post.assigned_to ?? "") === actor.id
+      : actor.role === "parceiro"
+        ? Boolean(actor.partnerId) && String(post.partner_id ?? "") === actor.partnerId
+        : true;
+    if (!assignedToActor) {
       return Response.json({ error: "Este conteúdo não está atribuído ao seu perfil." }, { status: 403 });
     }
     const files = form
