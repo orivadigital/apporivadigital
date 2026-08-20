@@ -62,10 +62,8 @@ export async function PATCH(request: Request, context: Context) {
       if ("partnerId" in body) {
         if (partnerId) {
           if (!isUuid(partnerId)) return Response.json({ error: "O parceiro responsável selecionado é inválido." }, { status: 400 });
-          const partners = await restRequest<Array<Record<string, unknown>>>(request, `partners?id=eq.${encodeURIComponent(partnerId)}&status=eq.ativo&profile_id=not.is.null&select=id,profile_id&limit=1`);
-          const profileId = String(partners[0]?.profile_id ?? "");
-          const profiles = profileId ? await restRequest<Array<Record<string, unknown>>>(request, `profiles?id=eq.${encodeURIComponent(profileId)}&role=eq.parceiro&is_active=eq.true&select=id&limit=1`) : [];
-          if (!partners[0] || !profiles[0]) return Response.json({ error: "Selecione um parceiro ativo que possua acesso ao sistema." }, { status: 400 });
+          const partners = await restRequest<Array<Record<string, unknown>>>(request, `partners?id=eq.${encodeURIComponent(partnerId)}&status=eq.ativo&select=id&limit=1`);
+          if (!partners[0]) return Response.json({ error: "Selecione um parceiro ativo." }, { status: 400 });
         }
         values.partner_id = partnerId || null;
       }

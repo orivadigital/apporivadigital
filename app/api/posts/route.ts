@@ -32,7 +32,6 @@ function mapPost(row: Record<string, unknown>, files: Array<Record<string, unkno
     caption: row.caption ?? "",
     clientNotes: row.client_notes ?? "",
     status: postStatusToUi(row.status),
-    hasResponsible: Boolean(row.assigned_to || row.partner_id),
     clientFeedback: row.client_feedback ?? "",
     createdBy: row.created_by,
     createdAt: row.created_at,
@@ -54,6 +53,7 @@ function mapPost(row: Record<string, unknown>, files: Array<Record<string, unkno
     }),
   };
   if (canSeeAssignments) {
+    post.hasResponsible = Boolean(row.assigned_to || row.partner_id);
     post.assignedTo = row.assigned_to ?? "";
     post.partnerId = row.partner_id ?? "";
   }
@@ -74,15 +74,10 @@ async function validateAssignments(request: Request, assignedTo: string, partner
     if (!isUuid(partnerId)) throw Response.json({ error: "O parceiro responsável selecionado é inválido." }, { status: 400 });
     const partners = await restRequest<Array<Record<string, unknown>>>(
       request,
-      `partners?id=eq.${encodeURIComponent(partnerId)}&status=eq.ativo&profile_id=not.is.null&select=id,profile_id&limit=1`,
+      `partners?id=eq.${encodeURIComponent(partnerId)}&status=eq.ativo&select=id&limit=1`,
     );
-    const profileId = String(partners[0]?.profile_id ?? "");
-    const profiles = profileId ? await restRequest<Array<Record<string, unknown>>>(
-      request,
-      `profiles?id=eq.${encodeURIComponent(profileId)}&role=eq.parceiro&is_active=eq.true&select=id&limit=1`,
-    ) : [];
-    if (!partners[0] || !profiles[0]) {
-      throw Response.json({ error: "Selecione um parceiro ativo que possua acesso ao sistema." }, { status: 400 });
+    if (!partners[0]) {
+      throw Response.json({ error: "Selecione um parceiro ativo." }, { status: 400 });
     }
   }
 }

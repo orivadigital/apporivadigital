@@ -202,11 +202,8 @@
           contentState.team = (accessPayload.accesses || []).filter(function (access) {
             return access.status === 'Ativo' && (access.role === 'agency_owner' || access.role === 'agency_member' || access.role === 'collaborator');
           });
-          var activePartnerIds = new Set((accessPayload.accesses || []).filter(function (access) {
-            return access.status === 'Ativo' && access.role === 'partner' && access.partnerId;
-          }).map(function (access) { return access.partnerId; }));
           contentState.partners = (accessPayload.partners || []).filter(function (partner) {
-            return partner.status === 'ativo' && activePartnerIds.has(partner.id);
+            return partner.status === 'ativo';
           });
         } catch (ignored) { contentState.team = []; contentState.partners = []; }
       }
@@ -675,7 +672,7 @@
     var workflowFields = [
       formField('Situação inicial', '<select name="status" required>' + options(statuses, post ? post.status : 'Rascunho') + '</select>'),
       formField('Responsável interno', '<select name="assigned_to">' + (function () { var html = '<option value="">Não definido</option>'; return html + teamOptions.map(function (person) { return '<option value="' + esc(person.value) + '"' + (post && post.assignedTo === person.value ? ' selected' : '') + '>' + esc(person.label) + '</option>'; }).join(''); })() + '</select>'),
-      formField('Parceiro responsável', '<select name="partner_id">' + (function () { var html = '<option value="">Sem parceiro atribuído</option>'; return html + partnerOptions.map(function (partner) { return '<option value="' + esc(partner.value) + '"' + (post && post.partnerId === partner.value ? ' selected' : '') + '>' + esc(partner.label) + '</option>'; }).join(''); })() + '</select>', false, 'O parceiro selecionado poderá editar a legenda, atualizar a situação e anexar materiais. Esta atribuição não fica visível para o cliente.')
+      formField('Parceiro responsável', '<select name="partner_id">' + (function () { var html = '<option value="">Sem parceiro atribuído</option>'; return html + partnerOptions.map(function (partner) { return '<option value="' + esc(partner.value) + '"' + (post && post.partnerId === partner.value ? ' selected' : '') + '>' + esc(partner.label) + '</option>'; }).join(''); })() + '</select>', false, 'Todos os parceiros ativos cadastrados aparecem aqui. Quando o login estiver vinculado, o parceiro poderá editar a legenda, atualizar a situação e anexar materiais. Esta atribuição não fica visível para o cliente.')
     ];
     if (!editing) {
       workflowFields.push(formField(
@@ -930,8 +927,6 @@
         '<div class="detail-row"><div class="detail-label">Parceiro responsável</div><div class="detail-value">' + esc(partnerResponsible ? partnerResponsible.name : 'Não definido') + '</div></div>';
     } else if (contentState.permissions.canEditAssigned) {
       responsibilityDetails = '<div class="detail-row"><div class="detail-label">Atribuição</div><div class="detail-value">Atribuído a você</div></div>';
-    } else if (contentState.clientMode && post.hasResponsible) {
-      responsibilityDetails = '<div class="detail-row"><div class="detail-label">Atendimento</div><div class="detail-value">Equipe Óriva</div></div>';
     }
     var commentHistory = (post.comments || []).length ? '<div class="detail-row"><div class="detail-label">Histórico de comentários</div>' + post.comments.map(function (comment) { return '<div style="padding:10px 0;border-bottom:1px solid var(--cinza-borda)"><div style="font-size:12px;font-weight:700">' + esc(comment.author) + '</div><div class="detail-value">' + esc(comment.comment) + '</div></div>'; }).join('') + '</div>' : '';
     var html = modalHeader(post.title) +
