@@ -152,6 +152,7 @@ export async function POST(request: Request) {
     };
     const rowsToCreate = scheduledDates.map((scheduledDate, index) => ({
       ...basePost,
+      title: scheduleDescriptions[index] || title,
       scheduled_date: scheduledDate,
       caption: scheduleDescriptions[index] || defaultCaption,
     }));

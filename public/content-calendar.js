@@ -494,7 +494,7 @@
   function scheduleDateRow(value, description) {
     return '<div class="schedule-date-row">' +
       '<div><span class="schedule-date-label">Data</span><input type="date" name="scheduled_date" required value="' + esc(value || '') + '"></div>' +
-      '<div class="schedule-description"><span class="schedule-date-label">Descrição/legenda específica (opcional)</span><input name="schedule_description" maxlength="2000" value="' + esc(description || '') + '" placeholder="Se ficar vazio, será usada a legenda geral"></div>' +
+      '<div class="schedule-description"><span class="schedule-date-label">Título/legenda desta data (opcional)</span><input name="schedule_description" maxlength="2000" value="' + esc(description || '') + '" placeholder="Esse texto será o título do card; se vazio, usaremos o título geral"></div>' +
       '<button type="button" class="btn-xs schedule-remove" onclick="removeContentScheduleDate(this)" aria-label="Remover esta data">Remover</button>' +
     '</div>';
   }
@@ -668,10 +668,10 @@
     ];
     if (!editing) {
       workflowFields.push(formField(
-        'Arquivos do conteúdo',
+        'Arquivos do conteúdo (opcional)',
         '<div class="upload-zone"><div style="font-weight:700;margin-bottom:5px">Imagem, arte, vídeo ou PDF</div><input id="content-files-input" type="file" accept="image/*,video/*,application/pdf" multiple onchange="handleContentFiles(this)"></div><div id="pending-content-files" class="file-list pending-file-list"><div class="management-inline-empty">Nenhum arquivo selecionado.</div></div>',
         true,
-        'Para carrossel, selecione as imagens na ordem correta. Os arquivos originais serão preservados sem compressão.'
+        'Você pode salvar sem anexos e adicionar os materiais depois. Para carrossel, selecione as imagens na ordem correta.'
       ));
     } else {
       workflowFields.push(formField('Arquivos atuais', '<div class="file-list">' + (agencyContentFileRows(post) || '<div class="management-inline-empty">Nenhum arquivo anexado.</div>') + '</div>', true));
@@ -681,7 +681,7 @@
       '<form id="content-form" class="modal-body" onsubmit="saveContent(event,\'' + (post ? esc(post.id) : '') + '\')">' +
       '<section class="form-section"><div class="form-section-title">1. Planejamento</div><div class="form-section-desc">Defina o formato, a rede e quando o conteúdo deve ser publicado.</div><div class="form-grid">' + planningFields.join('') + '</div></section>' +
       '<section class="form-section"><div class="form-section-title">2. Texto e orientações</div><div class="form-section-desc">Organize a legenda e as instruções que acompanharão a entrega.</div><div class="form-grid">' + copyFields.join('') + '</div></section>' +
-      '<section class="form-section"><div class="form-section-title">3. Arquivos e fluxo</div><div class="form-section-desc">Envie o material original e escolha quem ficará responsável.</div><div class="form-grid">' + workflowFields.join('') + '</div></section>' +
+      '<section class="form-section"><div class="form-section-title">3. Arquivos e fluxo</div><div class="form-section-desc">Adicione o material agora ou depois e escolha quem ficará responsável.</div><div class="form-grid">' + workflowFields.join('') + '</div></section>' +
       '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeContentModal()">Cancelar</button>' +
       '<button id="save-content-button" type="submit" class="btn btn-primary">' + (editing ? 'Salvar alterações' : 'Salvar conteúdo') + '</button></div></form>';
     showModal(html, false);
@@ -719,8 +719,9 @@
         });
       } else {
         var createData = new FormData(form);
-        if (!contentState.pendingFiles.length) throw new Error('Selecione pelo menos um arquivo para o conteúdo.');
-        preparedUploads = await uploadContentFilesDirect(contentState.pendingFiles, '', button);
+        if (contentState.pendingFiles.length) {
+          preparedUploads = await uploadContentFilesDirect(contentState.pendingFiles, '', button);
+        }
         button.textContent = 'Criando conteúdo...';
         var dates = createData.getAll('scheduled_date');
         var descriptions = createData.getAll('schedule_description');

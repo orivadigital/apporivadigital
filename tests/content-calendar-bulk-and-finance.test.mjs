@@ -19,7 +19,23 @@ test("content calendar supports several dates with a description for each one", 
   assert.match(route, /form!?\.getAll\("scheduled_date"\)/);
   assert.match(route, /form!?\.getAll\("schedule_description"\)/);
   assert.match(route, /rowsToCreate = scheduledDates\.map/);
+  assert.match(route, /title: scheduleDescriptions\[index\] \|\| title/);
   assert.match(route, /createdCount: postIds\.length/);
+});
+
+test("new calendar contents can be created without attachments", async () => {
+  const [calendar, route, migration] = await Promise.all([
+    read("public/content-calendar.js"),
+    read("app/api/posts/route.ts"),
+    read("supabase/migrations/20260818180000_calendar_direct_upload_atomic_creation.sql"),
+  ]);
+
+  assert.doesNotMatch(calendar, /Selecione pelo menos um arquivo para o conteúdo/);
+  assert.match(calendar, /if \(contentState\.pendingFiles\.length\) \{\s*preparedUploads = await uploadContentFilesDirect/);
+  assert.match(calendar, /uploadedFiles: uploadedFileMetadata\(preparedUploads\)/);
+  assert.match(route, /p_files: sharedFiles/);
+  assert.match(migration, /p_files jsonb default '\[\]'::jsonb/);
+  assert.match(migration, /if v_file_count > 0 then/);
 });
 
 test("selected and persisted content files can be removed safely", async () => {
