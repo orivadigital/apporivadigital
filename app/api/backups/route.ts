@@ -36,6 +36,7 @@ const BACKUP_TABLES: BackupTable[] = [
   { name: "lead_activities", order: "id" },
   { name: "audit_logs", order: "id" },
   { name: "chat_conversations", order: "id" },
+  { name: "chat_conversation_members", order: "conversation_id" },
   { name: "chat_messages", order: "id" },
 ];
 

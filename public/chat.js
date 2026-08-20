@@ -4,6 +4,7 @@
   var chatState = {
     conversations: [],
     participants: [],
+    automaticRecipientNames: ['Lucas', 'Arsênio', 'Alexandre'],
     actor: null,
     selectedId: '',
     filter: 'todos',
@@ -49,17 +50,17 @@
     var role = window.orivaCurrentActor && window.orivaCurrentActor.role;
     if (role === 'empresa_cliente') return {
       title: 'Falar com a Óriva',
-      description: 'Converse diretamente com a equipe e solicite novas demandas com segurança.',
+      description: 'Converse diretamente com os sócios e solicite novas demandas com segurança.',
       button: '+ Nova conversa'
     };
     if (role === 'colaborador' || role === 'parceiro') return {
       title: 'Falar com os sócios',
-      description: 'Tire dúvidas sobre as demandas atribuídas a você. Os clientes não participam destas conversas.',
+      description: 'Tire dúvidas sobre suas demandas. Lucas, Arsênio e Alexandre recebem cada nova conversa.',
       button: '+ Nova dúvida'
     };
     return {
       title: 'Central de conversas',
-      description: 'Atenda clientes, colaboradores e parceiros em conversas privadas e separadas.',
+      description: 'Atenda clientes e organize conversas internas individuais ou em grupo.',
       button: '+ Nova conversa'
     };
   }
@@ -85,6 +86,7 @@
       var payload = await api('/api/chat');
       chatState.conversations = payload.conversations || [];
       chatState.participants = payload.participants || [];
+      chatState.automaticRecipientNames = payload.automaticRecipientNames || chatState.automaticRecipientNames;
       chatState.actor = payload.actor || null;
       if (chatState.selectedId && !chatState.conversations.some(function (item) { return item.id === chatState.selectedId; })) {
         chatState.selectedId = '';
@@ -100,6 +102,7 @@
   function filteredConversations() {
     if (chatState.filter === 'todos') return chatState.conversations;
     if (chatState.filter === 'nova_demanda') return chatState.conversations.filter(function (item) { return item.type === 'nova_demanda'; });
+    if (chatState.filter === 'grupo') return chatState.conversations.filter(function (item) { return item.isGroup && item.status !== 'arquivada'; });
     if (chatState.filter === 'arquivada') return chatState.conversations.filter(function (item) { return item.status === 'arquivada'; });
     return chatState.conversations.filter(function (item) { return item.participantRole === chatState.filter && item.status !== 'arquivada'; });
   }
@@ -111,6 +114,7 @@
         { value: 'empresa_cliente', label: 'Clientes' },
         { value: 'colaborador', label: 'Colaboradores' },
         { value: 'parceiro', label: 'Parceiros' },
+        { value: 'grupo', label: 'Grupos' },
         { value: 'nova_demanda', label: 'Novas demandas' },
         { value: 'arquivada', label: 'Arquivadas' }
       ]);
@@ -124,8 +128,8 @@
 
   function conversationCard(item) {
     var meta = agencyRole()
-      ? item.participantName + ' · ' + item.participantRoleLabel
-      : (item.companyName || typeLabels[item.type] || 'Equipe Óriva');
+      ? (item.isGroup ? 'Grupo · ' + (item.memberSummary || 'Equipe Óriva') : item.participantName + ' · ' + item.participantRoleLabel)
+      : (item.isGroup ? 'Grupo com os sócios da Óriva' : (item.companyName || typeLabels[item.type] || 'Equipe Óriva'));
     return '<button class="chat-conversation' + (item.id === chatState.selectedId ? ' active' : '') + '" type="button" data-chat-id="' + esc(item.id) + '" onclick="openChatConversation(\'' + esc(item.id) + '\')">' +
       '<span class="chat-conversation-top"><strong>' + esc(item.subject) + '</strong><time>' + esc(formatChatDate(item.lastMessageAt, true)) + '</time></span>' +
       '<span class="chat-conversation-meta">' + esc(meta) + '</span>' +
@@ -189,18 +193,24 @@
     if (!panel) return;
     var summary = chatState.conversations.find(function (item) { return item.id === conversation.id; }) || {};
     var archived = conversation.status === 'arquivada';
+    var members = conversation.members || summary.members || [];
+    var memberNames = members.map(function (member) { return member.name; }).filter(Boolean);
+    var threadMeta = conversation.isGroup
+      ? 'Grupo · ' + (memberNames.length ? memberNames.join(', ') : 'Equipe Óriva')
+      : (agencyRole() ? ((summary.participantName || 'Participante') + ' · ' + (summary.participantRoleLabel || '')) : 'Conversa privada com a equipe Óriva');
     panel.innerHTML = '<header class="chat-thread-head">' +
       '<button class="chat-back-button" type="button" aria-label="Voltar às conversas" onclick="closeChatThread()">‹</button>' +
-      '<div><h2>' + esc(conversation.subject) + '</h2><p>' + esc(agencyRole() ? ((summary.participantName || 'Participante') + ' · ' + (summary.participantRoleLabel || '')) : 'Conversa privada com a equipe Óriva') + '</p></div>' +
+      '<div><h2>' + esc(conversation.subject) + '</h2><p>' + esc(threadMeta) + '</p></div>' +
       (agencyRole() ? '<button class="btn btn-ghost btn-compact" type="button" onclick="toggleChatArchive(\'' + esc(conversation.id) + '\',\'' + (archived ? 'reopen' : 'archive') + '\')">' + (archived ? 'Reabrir' : 'Arquivar') + '</button>' : '') +
       '</header>' +
       '<div class="chat-context">' +
       '<span>' + esc(typeLabels[summary.type] || 'Conversa') + '</span>' +
+      (conversation.isGroup ? '<span>' + members.length + ' participantes</span>' : '') +
       (summary.companyName ? '<span>Empresa: ' + esc(summary.companyName) + '</span>' : '') +
       (summary.relatedTaskTitle ? '<span>Demanda: ' + esc(summary.relatedTaskTitle) + '</span>' : '') +
       '</div>' +
       '<div class="chat-messages" id="chat-messages">' + (messages.length ? messages.map(function (message) {
-        var sender = message.own ? 'Você' : message.side === 'agency' ? 'Equipe Óriva' : (summary.participantName || 'Participante');
+        var sender = message.senderName || (message.own ? 'Você' : message.side === 'agency' ? 'Equipe Óriva' : (summary.participantName || 'Participante'));
         return '<article class="chat-message ' + (message.own ? 'own' : '') + '"><div class="chat-bubble"><b>' + esc(sender) + '</b><p>' + esc(message.body).replace(/\n/g, '<br>') + '</p><time>' + esc(formatChatDate(message.createdAt, false)) + '</time></div></article>';
       }).join('') : '<div class="chat-thread-empty"><p>Ainda não há mensagens nesta conversa.</p></div>') + '</div>' +
       (archived
@@ -286,7 +296,13 @@
       : admin
         ? [{ value: 'mensagem', label: 'Conversa' }, { value: 'duvida_demanda', label: 'Dúvida sobre demanda' }, { value: 'nova_demanda', label: 'Nova demanda do cliente' }]
         : [{ value: 'duvida_demanda', label: 'Dúvida sobre demanda' }, { value: 'mensagem', label: 'Conversa' }];
-    var participantField = admin ? window.orivaField('Falar com', '<select name="participantId" required>' + selectOptions(chatState.participants, 'id', function (item) { return item.name + ' · ' + item.roleLabel; }, 'Selecione uma pessoa') + '</select>', true) : '';
+    var selectableParticipants = chatState.participants.filter(function (item) { return !item.automatic; });
+    var participantChoices = selectableParticipants.length
+      ? selectableParticipants.map(function (item) {
+        return '<label class="chat-participant-choice"><input type="checkbox" name="participantIds" value="' + esc(item.id) + '"><span><strong>' + esc(item.name) + '</strong><small>' + esc(item.roleLabel) + '</small></span></label>';
+      }).join('')
+      : '<div class="management-inline-empty">Nenhuma outra pessoa com acesso ativo.</div>';
+    var participantField = admin ? '<div class="field span-2"><label>Adicionar pessoas ao grupo</label><p class="field-help">Marque uma ou mais pessoas. Os três sócios abaixo já participam automaticamente.</p><div class="chat-participant-grid">' + participantChoices + '</div></div>' : '';
     var companyField = client ? '' : window.orivaField('Empresa relacionada (opcional)', '<select name="companyId">' + selectOptions(companies, 'id', function (item) { return item.name; }, 'Sem empresa específica') + '</select>');
     var taskField = tasks.length ? window.orivaField('Demanda relacionada (opcional)', '<select name="relatedTaskId">' + selectOptions(tasks, 'id', function (item) { return item.title + (item.companyName ? ' · ' + item.companyName : ''); }, 'Sem demanda específica') + '</select>') : '';
     root.querySelector('.modal').innerHTML = window.orivaModalHead(client ? 'Nova conversa com a Óriva' : (admin ? 'Nova conversa' : 'Nova dúvida para os sócios')) +
@@ -295,14 +311,17 @@
       companyField + taskField +
       window.orivaField('Assunto', '<input name="subject" maxlength="160" required placeholder="Ex.: Dúvida sobre as fotos da campanha">', true) +
       window.orivaField('Mensagem', '<textarea name="message" rows="5" maxlength="5000" required placeholder="Escreva os detalhes para a equipe..."></textarea>', true) +
-      '</div><div class="chat-privacy-note"><strong>Conversa privada</strong><span>' + (admin ? 'Somente a equipe Óriva e a pessoa selecionada poderão acessar.' : 'Somente você e os sócios da Óriva poderão acessar. Clientes, colaboradores e parceiros não conversam entre si.') + '</span></div></div>' +
+      '</div><div class="chat-auto-mentions"><strong>Sócios mencionados automaticamente</strong><span>' + esc(chatState.automaticRecipientNames.join(', ')) + '</span></div>' +
+      '<div class="chat-privacy-note"><strong>Conversa protegida</strong><span>' + (admin ? 'Você pode adicionar várias pessoas à equipe. Clientes nunca são colocados em grupos com outros clientes, colaboradores ou parceiros.' : 'Somente você e os sócios da Óriva terão acesso. Clientes não conversam com parceiros ou colaboradores.') + '</span></div></div>' +
       '<div class="modal-actions"><button class="btn btn-ghost" type="button" onclick="closeManagementModal()">Cancelar</button><button class="btn btn-primary" type="submit">Iniciar conversa</button></div></form>';
   }
 
   async function saveChatConversation(event) {
     event.preventDefault();
     var form = event.currentTarget;
-    var data = Object.fromEntries(new FormData(form).entries());
+    var formData = new FormData(form);
+    var data = Object.fromEntries(formData.entries());
+    data.participantIds = formData.getAll('participantIds');
     var button = form.querySelector('button[type="submit"]');
     button.disabled = true;
     button.textContent = 'Criando conversa...';
@@ -355,8 +374,8 @@
 
   var style = document.createElement('style');
   style.textContent = '\
-    .chat-page-head{align-items:flex-start}.chat-filters{display:flex;gap:8px;overflow-x:auto;padding:0 0 12px;scrollbar-width:thin}.chat-filter{border:1px solid var(--cinza-borda);background:#fff;border-radius:999px;padding:8px 13px;color:var(--texto-sec);font-weight:700;white-space:nowrap;cursor:pointer}.chat-filter.active{background:var(--roxo);border-color:var(--roxo);color:#fff}.chat-layout{height:min(690px,calc(100vh - 205px));min-height:520px;display:grid;grid-template-columns:360px minmax(0,1fr);overflow:hidden;background:#fff;border:1px solid var(--cinza-borda);border-radius:18px;box-shadow:var(--shadow)}.chat-list-panel{overflow-y:auto;border-right:1px solid var(--cinza-borda);background:#fbfcfe}.chat-conversation{position:relative;width:100%;display:flex;flex-direction:column;gap:6px;border:0;border-bottom:1px solid var(--cinza-borda);background:transparent;padding:16px;text-align:left;cursor:pointer;color:inherit}.chat-conversation:hover,.chat-conversation.active{background:#f3f0ff}.chat-conversation.active:before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--roxo)}.chat-conversation-top,.chat-conversation-bottom{display:flex;justify-content:space-between;gap:10px;align-items:center}.chat-conversation-top strong{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chat-conversation-top time{font-size:11px;color:var(--texto-muted);white-space:nowrap}.chat-conversation-meta{font-size:12px;color:var(--roxo);font-weight:700}.chat-conversation-bottom>span{font-size:12px;color:var(--texto-sec);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chat-unread{display:grid;place-items:center;min-width:21px;height:21px;border-radius:99px;background:var(--roxo);color:#fff;font-size:11px;padding:0 6px}.chat-demand-badge{align-self:flex-start;border-radius:6px;background:#fff3d7;color:#915c00;font-size:10px;font-weight:800;font-style:normal;padding:4px 7px}.chat-thread-panel{min-width:0;display:flex;flex-direction:column;background:#fff}.chat-thread-head{min-height:73px;display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid var(--cinza-borda)}.chat-thread-head>div{min-width:0;flex:1}.chat-thread-head h2{font-size:16px;margin:0 0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chat-thread-head p{font-size:12px;color:var(--texto-sec);margin:0}.chat-back-button{display:none;border:0;background:var(--roxo-claro);color:var(--roxo);width:36px;height:36px;border-radius:10px;font-size:28px;cursor:pointer}.chat-context{display:flex;gap:8px;padding:9px 18px;border-bottom:1px solid var(--cinza-borda);overflow-x:auto}.chat-context span{border-radius:7px;background:#f3f5f8;padding:5px 8px;font-size:11px;color:var(--texto-sec);white-space:nowrap}.chat-messages{flex:1;overflow-y:auto;padding:20px;background:linear-gradient(180deg,#fbfcff,#f7f8fb)}.chat-message{display:flex;margin:0 0 12px}.chat-message.own{justify-content:flex-end}.chat-bubble{max-width:min(74%,620px);background:#fff;border:1px solid var(--cinza-borda);border-radius:4px 15px 15px 15px;padding:11px 13px;box-shadow:0 3px 12px rgba(15,23,42,.04)}.chat-message.own .chat-bubble{background:var(--roxo);border-color:var(--roxo);color:#fff;border-radius:15px 4px 15px 15px}.chat-bubble b{display:block;font-size:11px;margin-bottom:5px;color:var(--roxo)}.chat-message.own .chat-bubble b,.chat-message.own .chat-bubble time{color:rgba(255,255,255,.8)}.chat-bubble p{margin:0;line-height:1.48;overflow-wrap:anywhere}.chat-bubble time{display:block;text-align:right;color:var(--texto-muted);font-size:10px;margin-top:6px}.chat-composer{display:flex;align-items:flex-end;gap:10px;padding:14px;border-top:1px solid var(--cinza-borda);background:#fff}.chat-composer textarea{flex:1;resize:none;min-height:48px;max-height:130px}.chat-thread-empty,.chat-list-empty{display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px;color:var(--texto-sec)}.chat-thread-empty h3,.chat-list-empty strong{color:var(--texto);margin:10px 0 5px}.chat-thread-empty p,.chat-list-empty span{max-width:420px;margin:0;line-height:1.5}.chat-list-empty .btn{margin-top:16px}.chat-empty-icon{width:52px;height:52px;padding:13px;border-radius:16px;color:var(--roxo);background:var(--roxo-claro)}.chat-empty-icon svg{width:100%;height:100%}.chat-archived-note{padding:14px;text-align:center;background:#f5f6f8;color:var(--texto-sec);font-size:13px;border-top:1px solid var(--cinza-borda)}.chat-privacy-note{display:flex;gap:10px;flex-direction:column;border:1px solid #ddd4ff;background:#f8f6ff;color:var(--texto-sec);border-radius:12px;padding:12px 14px;margin-top:16px}.chat-privacy-note strong{color:var(--roxo)}.chat-privacy-note span{font-size:12px;line-height:1.5}\
-    @media(max-width:760px){.chat-page-head{display:flex;gap:12px}.chat-page-head .btn{width:100%}.chat-layout{height:calc(100dvh - 270px);min-height:460px;display:block;position:relative}.chat-list-panel,.chat-thread-panel{height:100%}.chat-thread-panel{display:none}.chat-layout.mobile-thread-open .chat-list-panel{display:none}.chat-layout.mobile-thread-open .chat-thread-panel{display:flex}.chat-back-button{display:grid;place-items:center}.chat-filters{padding-bottom:10px}.chat-conversation{padding:14px}.chat-bubble{max-width:88%}.chat-messages{padding:14px}.chat-composer{padding:10px}.chat-composer .btn{padding-inline:13px}}\
+    .chat-page-head{align-items:flex-start}.chat-filters{display:flex;gap:8px;overflow-x:auto;padding:0 0 12px;scrollbar-width:thin}.chat-filter{border:1px solid var(--cinza-borda);background:#fff;border-radius:999px;padding:8px 13px;color:var(--texto-sec);font-weight:700;white-space:nowrap;cursor:pointer}.chat-filter.active{background:var(--roxo);border-color:var(--roxo);color:#fff}.chat-layout{height:min(690px,calc(100vh - 205px));min-height:520px;display:grid;grid-template-columns:360px minmax(0,1fr);overflow:hidden;background:#fff;border:1px solid var(--cinza-borda);border-radius:18px;box-shadow:var(--shadow)}.chat-list-panel{overflow-y:auto;border-right:1px solid var(--cinza-borda);background:#fbfcfe}.chat-conversation{position:relative;width:100%;display:flex;flex-direction:column;gap:6px;border:0;border-bottom:1px solid var(--cinza-borda);background:transparent;padding:16px;text-align:left;cursor:pointer;color:inherit}.chat-conversation:hover,.chat-conversation.active{background:#f3f0ff}.chat-conversation.active:before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--roxo)}.chat-conversation-top,.chat-conversation-bottom{display:flex;justify-content:space-between;gap:10px;align-items:center}.chat-conversation-top strong{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chat-conversation-top time{font-size:11px;color:var(--texto-muted);white-space:nowrap}.chat-conversation-meta{font-size:12px;color:var(--roxo);font-weight:700}.chat-conversation-bottom>span{font-size:12px;color:var(--texto-sec);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chat-unread{display:grid;place-items:center;min-width:21px;height:21px;border-radius:99px;background:var(--roxo);color:#fff;font-size:11px;padding:0 6px}.chat-demand-badge{align-self:flex-start;border-radius:6px;background:#fff3d7;color:#915c00;font-size:10px;font-weight:800;font-style:normal;padding:4px 7px}.chat-thread-panel{min-width:0;display:flex;flex-direction:column;background:#fff}.chat-thread-head{min-height:73px;display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid var(--cinza-borda)}.chat-thread-head>div{min-width:0;flex:1}.chat-thread-head h2{font-size:16px;margin:0 0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chat-thread-head p{font-size:12px;color:var(--texto-sec);margin:0}.chat-back-button{display:none;border:0;background:var(--roxo-claro);color:var(--roxo);width:36px;height:36px;border-radius:10px;font-size:28px;cursor:pointer}.chat-context{display:flex;gap:8px;padding:9px 18px;border-bottom:1px solid var(--cinza-borda);overflow-x:auto}.chat-context span{border-radius:7px;background:#f3f5f8;padding:5px 8px;font-size:11px;color:var(--texto-sec);white-space:nowrap}.chat-messages{flex:1;overflow-y:auto;padding:20px;background:linear-gradient(180deg,#fbfcff,#f7f8fb)}.chat-message{display:flex;margin:0 0 12px}.chat-message.own{justify-content:flex-end}.chat-bubble{max-width:min(74%,620px);background:#fff;border:1px solid var(--cinza-borda);border-radius:4px 15px 15px 15px;padding:11px 13px;box-shadow:0 3px 12px rgba(15,23,42,.04)}.chat-message.own .chat-bubble{background:var(--roxo);border-color:var(--roxo);color:#fff;border-radius:15px 4px 15px 15px}.chat-bubble b{display:block;font-size:11px;margin-bottom:5px;color:var(--roxo)}.chat-message.own .chat-bubble b,.chat-message.own .chat-bubble time{color:rgba(255,255,255,.8)}.chat-bubble p{margin:0;line-height:1.48;overflow-wrap:anywhere}.chat-bubble time{display:block;text-align:right;color:var(--texto-muted);font-size:10px;margin-top:6px}.chat-composer{display:flex;align-items:flex-end;gap:10px;padding:14px;border-top:1px solid var(--cinza-borda);background:#fff}.chat-composer textarea{flex:1;resize:none;min-height:48px;max-height:130px}.chat-thread-empty,.chat-list-empty{display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px;color:var(--texto-sec)}.chat-thread-empty h3,.chat-list-empty strong{color:var(--texto);margin:10px 0 5px}.chat-thread-empty p,.chat-list-empty span{max-width:420px;margin:0;line-height:1.5}.chat-list-empty .btn{margin-top:16px}.chat-empty-icon{width:52px;height:52px;padding:13px;border-radius:16px;color:var(--roxo);background:var(--roxo-claro)}.chat-empty-icon svg{width:100%;height:100%}.chat-archived-note{padding:14px;text-align:center;background:#f5f6f8;color:var(--texto-sec);font-size:13px;border-top:1px solid var(--cinza-borda)}.chat-participant-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;max-height:230px;overflow-y:auto;padding:3px}.chat-participant-choice{display:flex;align-items:center;gap:10px;border:1px solid var(--cinza-borda);border-radius:11px;padding:10px 11px;cursor:pointer;background:#fff}.chat-participant-choice:has(input:checked){border-color:var(--roxo);background:#f7f4ff}.chat-participant-choice input{width:18px;height:18px;accent-color:var(--roxo)}.chat-participant-choice span{display:flex;min-width:0;flex-direction:column}.chat-participant-choice strong{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chat-participant-choice small{font-size:11px;color:var(--texto-sec)}.chat-auto-mentions{display:flex;flex-direction:column;gap:5px;border:1px solid #cfe8dc;background:#f2fbf7;border-radius:12px;padding:12px 14px;margin-top:16px}.chat-auto-mentions strong{font-size:12px;color:#14734a}.chat-auto-mentions span{font-size:13px;font-weight:700;color:#174f3b}.chat-privacy-note{display:flex;gap:10px;flex-direction:column;border:1px solid #ddd4ff;background:#f8f6ff;color:var(--texto-sec);border-radius:12px;padding:12px 14px;margin-top:10px}.chat-privacy-note strong{color:var(--roxo)}.chat-privacy-note span{font-size:12px;line-height:1.5}\
+    @media(max-width:760px){.chat-page-head{display:flex;gap:12px}.chat-page-head .btn{width:100%}.chat-layout{height:calc(100dvh - 270px);min-height:460px;display:block;position:relative}.chat-list-panel,.chat-thread-panel{height:100%}.chat-thread-panel{display:none}.chat-layout.mobile-thread-open .chat-list-panel{display:none}.chat-layout.mobile-thread-open .chat-thread-panel{display:flex}.chat-back-button{display:grid;place-items:center}.chat-filters{padding-bottom:10px}.chat-conversation{padding:14px}.chat-bubble{max-width:88%}.chat-messages{padding:14px}.chat-composer{padding:10px}.chat-composer .btn{padding-inline:13px}.chat-participant-grid{grid-template-columns:1fr;max-height:260px}}\
   ';
   document.head.appendChild(style);
 })();
