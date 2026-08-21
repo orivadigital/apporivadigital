@@ -1,4 +1,4 @@
-import { invokeAdminFunction, jsonError, normalizeEmail, requireAgencyAdministrator, requireSuperAdmin, restRequest } from "../../../lib/oriva-data";
+import { invokeAdminFunction, jsonError, linkPartnerProfileByMatchingEmail, normalizeEmail, requireAgencyAdministrator, requireSuperAdmin, restRequest } from "../../../lib/oriva-data";
 
 export const dynamic = "force-dynamic";
 
@@ -69,6 +69,7 @@ export async function POST(request: Request) {
       password,
       permissions: role === "colaborador" ? { view_companies: true, manage_content: true } : {},
     });
+    await linkPartnerProfileByMatchingEmail(request, email);
     return Response.json(result, { status: 201 });
   } catch (error) {
     return jsonError(error);

@@ -68,9 +68,9 @@ export async function PATCH(request: Request, context: Context) {
         values.partner_id = partnerId || null;
       }
     } else {
-      const assignedToActor = actor.role === "colaborador"
-        ? String(post.assigned_to ?? "") === actor.id
-        : Boolean(actor.partnerId) && String(post.partner_id ?? "") === actor.partnerId;
+      const assignedInternally = actor.role === "colaborador" && String(post.assigned_to ?? "") === actor.id;
+      const assignedAsPartner = Boolean(actor.partnerId) && String(post.partner_id ?? "") === actor.partnerId;
+      const assignedToActor = assignedInternally || assignedAsPartner;
       if (!assignedToActor) return Response.json({ error: "Este conteúdo não está atribuído ao seu perfil." }, { status: 403 });
       if ("caption" in body || "description" in body) values.caption = String(body.caption ?? body.description ?? "").trim();
       if ("status" in body) {

@@ -1,4 +1,4 @@
-import { invokeAdminFunction, jsonError, normalizeEmail, requireSuperAdmin, restRequest } from "../../../../lib/oriva-data";
+import { invokeAdminFunction, jsonError, linkPartnerProfileByMatchingEmail, normalizeEmail, requireSuperAdmin, restRequest } from "../../../../lib/oriva-data";
 
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ id: string }> };
@@ -11,11 +11,12 @@ export async function PATCH(request: Request, context: Context) {
     const { id } = await context.params;
     const body = await request.json() as Record<string, unknown>;
     const role = roleMap[String(body.role)] ?? String(body.role ?? "socio");
+    const accessEmail = normalizeEmail(body.email);
     const result = await invokeAdminFunction(request, {
       action: "update_profile",
       profile_id: id,
       name: body.name,
-      email: normalizeEmail(body.email),
+      email: accessEmail,
       phone: body.phone,
       role,
       company_id: body.tenantId || null,
@@ -24,6 +25,7 @@ export async function PATCH(request: Request, context: Context) {
       is_active: String(body.status ?? "Ativo") === "Ativo",
       permissions: role === "colaborador" ? { view_companies: true, manage_content: true } : {},
     });
+    await linkPartnerProfileByMatchingEmail(request, accessEmail, id);
     return Response.json(result);
   } catch (error) {
     return jsonError(error);

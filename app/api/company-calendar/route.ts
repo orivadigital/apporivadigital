@@ -9,10 +9,6 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     let companyId = String(url.searchParams.get("tenant_id") ?? "").trim();
 
-    if (actor.role === "colaborador") {
-      return Response.json({ error: "Use a área Minhas demandas ou Minha agenda para ver somente as atividades atribuídas a você." }, { status: 403 });
-    }
-
     if (actor.role === "empresa_cliente") {
       if (!actor.companyId) return Response.json({ error: "Nenhuma empresa está vinculada ao seu login." }, { status: 403 });
       if (companyId && companyId !== actor.companyId) return Response.json({ error: "Você não possui acesso a esta empresa." }, { status: 403 });
@@ -21,7 +17,7 @@ export async function GET(request: Request) {
     if (actor.role === "parceiro" && !actor.partnerId) {
       return Response.json({ error: "Seu acesso ainda não está vinculado a um cadastro de Parceiro PJ." }, { status: 403 });
     }
-    if (!["empresa_cliente", "parceiro"].includes(actor.role) && !companyId) {
+    if (!["empresa_cliente", "parceiro", "colaborador"].includes(actor.role) && !companyId) {
       return Response.json({ error: "Selecione uma empresa para abrir o calendário geral." }, { status: 400 });
     }
 
@@ -30,6 +26,10 @@ export async function GET(request: Request) {
       order: "due_date.asc,created_at.asc",
     });
     if (companyId) taskFilters.set("company_id", `eq.${companyId}`);
+    if (actor.role === "colaborador") {
+      if (actor.partnerId) taskFilters.set("or", `(assigned_to.eq.${actor.id},partner_id.eq.${actor.partnerId})`);
+      else taskFilters.set("assigned_to", `eq.${actor.id}`);
+    }
     if (actor.role === "parceiro") taskFilters.set("partner_id", `eq.${actor.partnerId}`);
     const tasks = await restRequest<Array<Record<string, unknown>>>(request, `agency_tasks?${taskFilters.toString()}`);
 
@@ -42,7 +42,11 @@ export async function GET(request: Request) {
 
     const postFilters = new URLSearchParams({ select: "id,company_id,title,content_type,social_network,scheduled_date,scheduled_time,status", order: "scheduled_date.asc,scheduled_time.asc" });
     if (companyIds.length) postFilters.set("company_id", `in.(${companyIds.join(",")})`);
-    if (actor.role === "parceiro") postFilters.set("assigned_to", `eq.${actor.id}`);
+    if (actor.role === "colaborador") {
+      if (actor.partnerId) postFilters.set("or", `(assigned_to.eq.${actor.id},partner_id.eq.${actor.partnerId})`);
+      else postFilters.set("assigned_to", `eq.${actor.id}`);
+    }
+    if (actor.role === "parceiro") postFilters.set("partner_id", `eq.${actor.partnerId}`);
     const posts = companyIds.length
       ? await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?${postFilters.toString()}`)
       : [];

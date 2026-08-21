@@ -420,8 +420,8 @@
 
   function openBootstrapOwner() {
     var html = modalHead('Configurar proprietário da Óriva') + '<form onsubmit="bootstrapOwner(event)"><div class="modal-body"><div class="form-grid">' +
-      field('Seu nome completo', '<input name="name" required value="Ramon da Costa Ribeiro">') +
-      field('E-mail do proprietário', '<input name="email" type="email" required value="ramonvalnei3@gmail.com">') +
+      field('Seu nome completo', '<input name="name" required autocomplete="name" placeholder="Nome do proprietário">') +
+      field('E-mail do proprietário', '<input name="email" type="email" required autocomplete="email" placeholder="proprietario@empresa.com">') +
       field('Crie sua senha', '<input name="password" type="password" minlength="8" required autocomplete="new-password">', false, 'Use pelo menos 8 caracteres. A senha fica somente no Supabase Auth.') +
       '</div></div><div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeManagementModal()">Cancelar</button><button type="submit" class="btn btn-primary">Criar minha conta</button></div></form>';
     showModal(html, false);
@@ -620,7 +620,7 @@
   window.generateTemporaryPassword = generateTemporaryPassword;
 
   function showCompanyCredentials(companyName, email, password) {
-    var text = 'Acesso da ' + companyName + '\nLogin: ' + email + '\nSenha temporária: ' + password + '\nSite: https://oriva-plataforma.ramonvalnei3.chatgpt.site';
+    var text = 'Acesso da ' + companyName + '\nLogin: ' + email + '\nSenha temporária: ' + password + '\nSite: https://app.orivadigital.com.br/oriva-plataforma.html';
     var html = modalHead('Empresa e acesso criados') + '<div class="modal-body"><div class="empty-icon">✓</div><div style="text-align:center"><h3 style="font-size:18px">Tudo pronto para o cliente entrar</h3><p class="page-desc" style="margin-top:5px">Copie os dados abaixo e envie por um canal seguro. A senha não será armazenada nesta tela depois que ela for fechada.</p></div>' +
       '<div class="credential-box"><div class="credential-row"><div class="credential-label">Empresa</div><div class="credential-value">' + esc(companyName) + '</div></div><div class="credential-row"><div class="credential-label">Login</div><div class="credential-value">' + esc(email) + '</div></div><div class="credential-row"><div class="credential-label">Senha</div><div class="credential-value">' + esc(password) + '</div></div></div>' +
       '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeManagementModal()">Fechar</button><button type="button" class="btn btn-primary" id="copy-client-access" onclick="copyClientCredentials()">Copiar acesso</button></div></div>';
@@ -746,7 +746,7 @@
       area.innerHTML = '<div class="tbl-wrap"><table><thead><tr><th>Parceiro</th><th>Contato</th><th>Especialidade</th><th>Valor médio</th><th>Demandas</th><th>Situação</th><th>Ações</th></tr></thead><tbody>' +
         state.partners.map(function (partner) {
           return '<tr data-search="' + esc([partner.name, partner.companyName, partner.email, partner.specialty, partner.status].join(' ')) + '"><td><div class="td-nome"><div class="avatar-sm" style="background:var(--preto)">' + esc(initials(partner.name)) + '</div><div>' + esc(partner.name) + '<div class="li-sub">' + esc(partner.companyName || 'Pessoa física/PJ') + '</div></div></div></td>' +
-            '<td><div>' + esc(partner.email || 'Sem e-mail') + '</div><div class="li-sub">' + esc(partner.phone || '') + '</div></td><td>' + esc(partner.specialty) + '</td><td style="font-weight:700">' + money(partner.averageValueCents) + '</td>' +
+            '<td><div>' + esc(partner.email || 'Sem e-mail') + '</div><div class="li-sub">' + esc(partner.phone || '') + '</div><span class="tag ' + (partner.accessLinked ? 'tag-verde' : 'tag-amarelo') + '" style="margin-top:5px">' + (partner.accessLinked ? 'Acesso vinculado' : 'Sem acesso vinculado') + '</span></td><td>' + esc(partner.specialty) + '</td><td style="font-weight:700">' + money(partner.averageValueCents) + '</td>' +
             '<td>' + esc(partner.openDemands) + '</td><td><span class="tag ' + (partner.status === 'Ativo' ? 'tag-verde' : 'tag-cinza') + '">' + esc(partner.status) + '</span></td>' +
             '<td><div class="management-actions"><button class="btn btn-ghost" style="padding:7px 9px" onclick="openPartnerForm(\'' + esc(partner.id) + '\')">Editar</button><button class="btn btn-ghost" style="padding:7px 9px;color:var(--vermelho)" onclick="deletePartner(\'' + esc(partner.id) + '\')">Excluir</button></div></td></tr>';
         }).join('') + '</tbody></table></div>';
@@ -762,7 +762,7 @@
       '<form onsubmit="savePartner(event,\'' + esc(id || '') + '\')"><div class="modal-body"><div class="form-grid">' +
       field('Nome', '<input name="name" required value="' + esc(partner ? partner.name : '') + '">') +
       field('Empresa / nome PJ', '<input name="companyName" value="' + esc(partner ? partner.companyName : '') + '">') +
-      field('E-mail', '<input name="email" type="email" value="' + esc(partner ? partner.email : '') + '">') +
+      field('E-mail', '<input name="email" type="email" value="' + esc(partner ? partner.email : '') + '">', false, 'Use o mesmo e-mail da conta de acesso. O vínculo será feito automaticamente.') +
       field('Telefone', '<input name="phone" value="' + esc(partner ? partner.phone : '') + '">') +
       field('Especialidade', '<input name="specialty" required value="' + esc(partner ? partner.specialty : '') + '" placeholder="Ex.: Edição de vídeo">') +
       field('Valor médio (R$)', '<input name="averageValue" inputmode="decimal" value="' + esc(partner ? (partner.averageValueCents / 100).toFixed(2).replace('.', ',') : '') + '">') +
@@ -1060,7 +1060,7 @@
   paginas.tarefas = function () {
     window.setTimeout(loadTasks, 0);
     var readOnly = !canManageAgencyTasks();
-    return '<div class="page-head"><div><h1 class="page-title">' + (readOnly ? 'Minhas demandas' : 'Painel geral dos sócios') + '</h1><p class="page-desc">' + (readOnly ? 'Somente as atividades atribuídas diretamente a você' : 'Atividades compartilhadas, responsáveis, prazos e entregas') + '</p></div>' + (readOnly ? '' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' +
+    return '<div class="page-head"><div><h1 class="page-title">' + (readOnly ? 'Minhas demandas' : 'Painel geral dos sócios') + '</h1><p class="page-desc">' + (readOnly ? 'Atividades atribuídas a você como responsável ou Parceiro PJ' : 'Atividades compartilhadas, responsáveis, prazos e entregas') + '</p></div>' + (readOnly ? '' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' +
       '<div class="content-toolbar">' + (readOnly ? '<select id="task-status-filter" onchange="renderTasks()"><option value="">Todas as situações</option><option>Pendente</option><option>Em andamento</option><option>Atrasado</option><option>Concluído</option></select>' : '<select id="task-company-filter" onchange="renderTasks()"><option value="">Todas as empresas</option></select><select id="task-person-filter" onchange="renderTasks()"><option value="">Todos os responsáveis</option></select>') + '<button class="btn btn-ghost" onclick="loadTasks()">Atualizar</button></div>' +
       loading('tasks-area', readOnly ? 'Carregando suas demandas...' : 'Carregando atividades dos sócios...');
   };
@@ -1118,8 +1118,8 @@
       var tasks = visible.filter(function (task) { return task.displayStatus === column; });
       return '<section class="task-column"><div class="task-column-head"><span><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + colors[column] + ';margin-right:6px"></i>' + column + '</span><span class="kb-count">' + tasks.length + '</span></div>' +
         (tasks.length ? tasks.map(function (task) {
-          return '<article class="task-item" data-search="' + esc([task.title, task.companyName, task.taskType, task.assignedToName, task.partnerName, task.displayStatus].join(' ')) + '" style="border-left-color:' + colors[column] + '"><div class="kb-tags"><span class="tag tag-roxo">' + esc(task.taskType) + '</span><span class="tag ' + (task.priority === 'Alta' || task.priority === 'Urgente' ? 'tag-vermelho' : task.priority === 'Média' ? 'tag-amarelo' : 'tag-cinza') + '">' + esc(task.priority) + '</span></div><h4>' + esc(task.title) + '</h4><div class="task-meta">' + esc(task.companyName || 'Atividade interna') + '<br>Entrega: ' + esc(dateBR(task.dueDate)) + '<br>Responsável: ' + esc(task.assignedToName || 'Não definido') + (task.partnerName ? '<br>Parceiro: ' + esc(task.partnerName) : '') + '</div>' +
-            '<div class="task-actions">' + (readOnly ? '<button class="btn-xs" onclick="openTaskDetails(\'' + esc(task.id) + '\')">Ver detalhes</button>' : (column !== 'Concluído' ? '<button class="btn-xs" onclick="completeTask(\'' + esc(task.id) + '\')">✓ Concluir</button>' : '<button class="btn-xs" onclick="reopenTask(\'' + esc(task.id) + '\')">Reabrir</button>') + '<button class="btn-xs" onclick="openTaskForm(\'' + esc(task.id) + '\')">Editar</button><button class="btn-xs" style="color:var(--vermelho)" onclick="deleteTask(\'' + esc(task.id) + '\')">Excluir</button>') + '</div></article>';
+          return '<article class="task-item' + (readOnly ? ' task-item-clickable' : '') + '"' + (readOnly ? ' role="button" tabindex="0" onclick="openTaskDetails(\'' + esc(task.id) + '\')" onkeydown="openTaskDetailsByKeyboard(event,\'' + esc(task.id) + '\')"' : '') + ' data-search="' + esc([task.title, task.companyName, task.taskType, task.assignedToName, task.partnerName, task.displayStatus].join(' ')) + '" style="border-left-color:' + colors[column] + '"><div class="kb-tags"><span class="tag tag-roxo">' + esc(task.taskType) + '</span><span class="tag ' + (task.priority === 'Alta' || task.priority === 'Urgente' ? 'tag-vermelho' : task.priority === 'Média' ? 'tag-amarelo' : 'tag-cinza') + '">' + esc(task.priority) + '</span></div><h4>' + esc(task.title) + '</h4><div class="task-meta">' + esc(task.companyName || 'Atividade interna') + '<br>Entrega: ' + esc(dateBR(task.dueDate)) + '<br>Responsável interno: ' + esc(task.assignedToName || 'Não definido') + (task.partnerName ? '<br>Parceiro responsável: ' + esc(task.partnerName) : '') + '</div>' +
+            '<div class="task-actions">' + (readOnly ? '<span class="btn-xs">Ver detalhes</span>' : (column !== 'Concluído' ? '<button class="btn-xs" onclick="completeTask(\'' + esc(task.id) + '\')">✓ Concluir</button>' : '<button class="btn-xs" onclick="reopenTask(\'' + esc(task.id) + '\')">Reabrir</button>') + '<button class="btn-xs" onclick="openTaskForm(\'' + esc(task.id) + '\')">Editar</button><button class="btn-xs" style="color:var(--vermelho)" onclick="deleteTask(\'' + esc(task.id) + '\')">Excluir</button>') + '</div></article>';
         }).join('') : '<div class="page-desc" style="text-align:center;padding:20px 4px">Nenhuma atividade</div>') + '</section>';
     }).join('') + '</div>';
   }
@@ -1132,6 +1132,13 @@
     window.setTimeout(function () { loadAssignedTaskFiles(task.id); }, 0);
   }
   window.openTaskDetails = openTaskDetails;
+
+  function openTaskDetailsByKeyboard(event, id) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    openTaskDetails(id);
+  }
+  window.openTaskDetailsByKeyboard = openTaskDetailsByKeyboard;
 
   async function loadAssignedTaskFiles(taskId) {
     var area = document.getElementById('assigned-task-files'); if (!area) return;
@@ -1315,7 +1322,7 @@
     window.setTimeout(loadDashboard, 0);
     var actor = state.session && state.session.actor; var name = actor ? (actor.name || actor.email) : 'equipe';
     var readOnly = !canManageAgencyTasks();
-    return '<div class="page-head"><div><h1 class="page-title">Olá, ' + esc(name.split(' ')[0]) + ' 👋</h1><p class="page-desc">' + (readOnly ? 'Acompanhe somente as demandas atribuídas a você' : 'Visão real da operação da Óriva hoje') + '</p></div>' + (readOnly ? '<button class="btn btn-ghost" onclick="irPara(\'tarefas\')">Ver minhas demandas</button>' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' + loading('dashboard-real-area', 'Atualizando indicadores...');
+    return '<div class="page-head"><div><h1 class="page-title">Olá, ' + esc(name.split(' ')[0]) + ' 👋</h1><p class="page-desc">' + (readOnly ? 'Acompanhe as demandas atribuídas ao seu perfil ou cadastro de Parceiro PJ' : 'Visão real da operação da Óriva hoje') + '</p></div>' + (readOnly ? '<button class="btn btn-ghost" onclick="irPara(\'tarefas\')">Ver minhas demandas</button>' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' + loading('dashboard-real-area', 'Atualizando indicadores...');
   };
 
   async function loadDashboard() {
@@ -1355,7 +1362,7 @@
   paginas.agenda = function () {
     window.setTimeout(loadAgenda, 0);
     var readOnly = !canManageAgencyTasks();
-    return '<div class="page-head"><div><h1 class="page-title">' + (readOnly ? 'Minha agenda' : 'Agenda de entregas') + '</h1><p class="page-desc">' + (readOnly ? 'Prazos das atividades atribuídas diretamente a você' : 'Prazos reais dos projetos e atividades da agência') + '</p></div>' + (readOnly ? '' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' +
+    return '<div class="page-head"><div><h1 class="page-title">' + (readOnly ? 'Minha agenda' : 'Agenda de entregas') + '</h1><p class="page-desc">' + (readOnly ? 'Prazos das atividades atribuídas ao seu perfil ou cadastro de Parceiro PJ' : 'Prazos reais dos projetos e atividades da agência') + '</p></div>' + (readOnly ? '' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' +
       '<div class="content-toolbar">' + (readOnly ? '' : '<select id="agenda-company-filter" onchange="renderAgenda()"><option value="">Todas as empresas</option></select><select id="agenda-person-filter" onchange="renderAgenda()"><option value="">Todos os responsáveis</option></select>') + '<select id="agenda-status-filter" onchange="renderAgenda()"><option value="">Todas as situações</option><option>Pendente</option><option>Em andamento</option><option>Atrasado</option><option>Concluído</option></select><button class="btn btn-ghost" onclick="goAgendaToday()">Hoje</button><div class="agenda-nav"><button class="btn btn-ghost" aria-label="Semana anterior" onclick="moveAgenda(-1)">‹</button><button class="btn btn-ghost" aria-label="Próxima semana" onclick="moveAgenda(1)">›</button></div></div>' + loading('agenda-area', readOnly ? 'Carregando sua agenda...' : 'Carregando agenda...');
   };
 

@@ -436,6 +436,37 @@ export function normalizeEmail(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+export async function linkPartnerProfileByMatchingEmail(request: Request, value: unknown, expectedProfileId = "") {
+  const email = normalizeEmail(value);
+  if (!email) return false;
+  const profileFilter = expectedProfileId ? `id=eq.${encodeURIComponent(expectedProfileId)}&` : "";
+  const profiles = await restRequest<Array<Record<string, unknown>>>(
+    request,
+    `profiles?${profileFilter}email=eq.${encodeURIComponent(email)}&is_active=eq.true&role=in.(colaborador,parceiro)&select=id&limit=2`,
+  );
+  if (profiles.length !== 1) return false;
+  const profileId = String(profiles[0].id ?? "");
+  const partners = await restRequest<Array<Record<string, unknown>>>(
+    request,
+    `partners?email=eq.${encodeURIComponent(email)}&status=eq.ativo&select=id,profile_id&limit=2`,
+  );
+  if (partners.length !== 1) return false;
+  const partner = partners[0];
+  if (String(partner.profile_id ?? "") === profileId) return true;
+  if (partner.profile_id) return false;
+  const existing = await restRequest<Array<Record<string, unknown>>>(
+    request,
+    `partners?profile_id=eq.${encodeURIComponent(profileId)}&select=id&limit=1`,
+  );
+  if (existing.length) return false;
+  await restRequest(
+    request,
+    `partners?id=eq.${encodeURIComponent(String(partner.id))}`,
+    { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ profile_id: profileId }) },
+  );
+  return true;
+}
+
 export function normalizeLabel(value: unknown) {
   return String(value ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 }

@@ -39,11 +39,13 @@ export async function POST(request: Request) {
     const posts = await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?id=eq.${encodeURIComponent(postId)}&select=id,company_id,assigned_to,partner_id&limit=1`);
     const post = posts[0];
     if (!post?.company_id) return Response.json({ error: "Conteúdo não encontrado ou não atribuído ao seu perfil." }, { status: 404 });
-    const assignedToActor = actor.role === "colaborador"
-      ? String(post.assigned_to ?? "") === actor.id
-      : actor.role === "parceiro"
-        ? Boolean(actor.partnerId) && String(post.partner_id ?? "") === actor.partnerId
-        : true;
+    const assignedInternally = actor.role === "colaborador" && String(post.assigned_to ?? "") === actor.id;
+    const assignedAsPartner = ["colaborador", "parceiro"].includes(actor.role)
+      && Boolean(actor.partnerId)
+      && String(post.partner_id ?? "") === actor.partnerId;
+    const assignedToActor = ["super_admin", "socio"].includes(actor.role)
+      || assignedInternally
+      || assignedAsPartner;
     if (!assignedToActor) {
       return Response.json({ error: "Este conteúdo não está atribuído ao seu perfil." }, { status: 403 });
     }

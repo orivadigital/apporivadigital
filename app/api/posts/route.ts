@@ -103,7 +103,13 @@ export async function GET(request: Request) {
       if (!companies[0]) return Response.json({ error: "Empresa não encontrada entre os seus conteúdos atribuídos." }, { status: 404 });
     }
     const params = new URLSearchParams({ company_id: `eq.${companyId}`, select: "*", order: "scheduled_date.asc,scheduled_time.asc,created_at.asc" });
-    if (actor.role === "colaborador") params.set("assigned_to", `eq.${actor.id}`);
+    if (actor.role === "colaborador") {
+      if (actor.partnerId) {
+        params.set("or", `(assigned_to.eq.${actor.id},partner_id.eq.${actor.partnerId})`);
+      } else {
+        params.set("assigned_to", `eq.${actor.id}`);
+      }
+    }
     if (actor.role === "parceiro") {
       if (!actor.partnerId) return Response.json({ error: "Seu perfil ainda não está vinculado a um parceiro." }, { status: 403 });
       params.set("partner_id", `eq.${actor.partnerId}`);

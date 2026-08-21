@@ -11,7 +11,13 @@ export async function GET(request: Request) {
       return Response.json({ error: "Acesso restrito à equipe e aos parceiros da agência." }, { status: 403 });
     }
     const filters = new URLSearchParams({ select: "*,companies(name)", order: "due_date.asc,created_at.asc" });
-    if (actor.role === "colaborador") filters.set("assigned_to", `eq.${actor.id}`);
+    if (actor.role === "colaborador") {
+      if (actor.partnerId) {
+        filters.set("or", `(assigned_to.eq.${actor.id},partner_id.eq.${actor.partnerId})`);
+      } else {
+        filters.set("assigned_to", `eq.${actor.id}`);
+      }
+    }
     if (actor.role === "parceiro") {
       if (!actor.partnerId) return Response.json({ error: "Seu login ainda não está vinculado a um Parceiro PJ." }, { status: 403 });
       filters.set("partner_id", `eq.${actor.partnerId}`);
