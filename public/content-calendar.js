@@ -7,6 +7,7 @@
     team: [],
     partners: [],
     tenantId: '',
+    pendingPostId: '',
     clientMode: false,
     restrictedMode: false,
     permissions: { canManage: false, canReview: true, canEditAssigned: false, canAttach: false },
@@ -164,9 +165,17 @@
 
   function abrirCalendarioEmpresa(tenantId) {
     contentState.tenantId = tenantId;
+    contentState.pendingPostId = '';
     irPara('calendario-posts');
   }
   window.abrirCalendarioEmpresa = abrirCalendarioEmpresa;
+
+  function abrirConteudoAgenda(tenantId, postId) {
+    contentState.tenantId = tenantId;
+    contentState.pendingPostId = postId;
+    irPara('calendario-posts');
+  }
+  window.abrirConteudoAgenda = abrirConteudoAgenda;
 
   async function apiJson(url, options, retried) {
     var response;
@@ -278,6 +287,13 @@
       var button = document.getElementById('new-content-main');
       if (button) button.style.display = contentState.permissions.canManage ? 'inline-flex' : 'none';
       renderContentCalendar();
+      if (contentState.pendingPostId) {
+        var pendingId = contentState.pendingPostId;
+        contentState.pendingPostId = '';
+        if (contentState.posts.some(function (post) { return post.id === pendingId; })) {
+          window.setTimeout(function () { openContentDetails(pendingId); }, 0);
+        }
+      }
     } catch (error) {
       renderCalendarError(error.message);
     }

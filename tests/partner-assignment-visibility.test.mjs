@@ -39,16 +39,27 @@ test("Partner PJ registration links the matching active access without changing 
   assert.doesNotMatch(migration, /update public\.agency_tasks/);
 });
 
-test("overview and agenda use assigned tasks and desktop cards open details", async () => {
-  const [management, html] = await Promise.all([
+test("overview, task board and agenda unify tasks with assigned calendar contents", async () => {
+  const [management, calendar, workItems, html] = await Promise.all([
     read("public/management.js"),
+    read("public/content-calendar.js"),
+    read("app/api/work-items/route.ts"),
     read("public/oriva-plataforma.html"),
   ]);
 
-  assert.match(management, /async function loadDashboard\([\s\S]*ownPayload = await api\('\/api\/tasks'\)/);
-  assert.match(management, /async function loadAgenda\([\s\S]*ownPayload = await api\('\/api\/tasks'\)/);
-  assert.match(management, /task-item-clickable[\s\S]*onclick="openTaskDetails/);
-  assert.match(management, /function openTaskDetailsByKeyboard\(/);
+  assert.match(management, /async function loadDashboard\([\s\S]*ownPayload = await api\('\/api\/work-items'\)/);
+  assert.match(management, /async function loadAgenda\([\s\S]*ownPayload = await api\('\/api\/work-items'\)/);
+  assert.match(management, /async function loadTasks\([\s\S]*api\('\/api\/work-items'\)/);
+  assert.match(workItems, /Promise\.all\([\s\S]*agency_tasks[\s\S]*scheduled_posts/);
+  assert.match(workItems, /entityType: "post"/);
+  assert.match(workItems, /entityType: "task"/);
+  assert.match(management, /function workItemMatchesPerson\(/);
+  assert.match(management, /partner\.profileId \|\| partner\.profile_id/);
+  assert.match(management, /task-item-clickable[\s\S]*onclick="openWorkItem/);
+  assert.match(management, /function openWorkItemByKeyboard\(/);
+  assert.match(calendar, /function abrirConteudoAgenda\(/);
+  assert.match(calendar, /openContentDetails\(pendingId\)/);
   assert.match(html, /\.task-item-clickable:hover,\.task-item-clickable:focus-visible/);
-  assert.match(html, /management\.js\?v=20260821-1/);
+  assert.match(html, /management\.js\?v=20260821-2/);
+  assert.match(html, /content-calendar\.js\?v=20260821-2/);
 });

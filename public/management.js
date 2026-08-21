@@ -1057,10 +1057,61 @@
   }
   window.exportFinanceCsv = exportFinanceCsv;
 
+  function responsibleFilterOptions() {
+    var team = state.accesses.filter(function (access) {
+      return access.role === 'agency_owner' || access.role === 'agency_member' || access.role === 'collaborator';
+    });
+    var profileIds = new Set(team.map(function (access) { return access.id; }));
+    return team.map(function (access) {
+      return { value: 'profile:' + access.id, label: access.name || access.email };
+    }).concat(state.partners.filter(function (partner) {
+      var partnerProfileId = partner.profileId || partner.profile_id || '';
+      return !partnerProfileId || !profileIds.has(partnerProfileId);
+    }).map(function (partner) {
+      return { value: 'partner:' + partner.id, label: 'Parceiro · ' + partner.name };
+    }));
+  }
+
+  function workItemMatchesPerson(item, value) {
+    if (!value) return true;
+    if (value.indexOf('profile:') === 0) {
+      var profileId = value.slice(8);
+      var linkedPartnerIds = state.partners.filter(function (partner) {
+        return (partner.profileId || partner.profile_id || '') === profileId;
+      }).map(function (partner) { return partner.id; });
+      return item.assignedTo === profileId || item.partnerProfileId === profileId || linkedPartnerIds.includes(item.partnerId);
+    }
+    if (value.indexOf('partner:') === 0) return item.partnerId === value.slice(8);
+    return item.assignedTo === value || item.partnerId === value;
+  }
+
+  function openWorkItem(id) {
+    var item = state.tasks.find(function (current) { return current.id === id; });
+    if (!item) { toast('Atividade não encontrada.', true); return; }
+    if (item.entityType === 'post') {
+      if (typeof window.abrirConteudoAgenda === 'function') {
+        window.abrirConteudoAgenda(item.tenantId, item.id);
+      } else {
+        window.abrirCalendarioEmpresa(item.tenantId);
+      }
+      return;
+    }
+    if (canManageAgencyTasks()) openTaskForm(id);
+    else openTaskDetails(id);
+  }
+  window.openWorkItem = openWorkItem;
+
+  function openWorkItemByKeyboard(event, id) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    openWorkItem(id);
+  }
+  window.openWorkItemByKeyboard = openWorkItemByKeyboard;
+
   paginas.tarefas = function () {
     window.setTimeout(loadTasks, 0);
     var readOnly = !canManageAgencyTasks();
-    return '<div class="page-head"><div><h1 class="page-title">' + (readOnly ? 'Minhas demandas' : 'Painel geral dos sócios') + '</h1><p class="page-desc">' + (readOnly ? 'Atividades atribuídas a você como responsável ou Parceiro PJ' : 'Atividades compartilhadas, responsáveis, prazos e entregas') + '</p></div>' + (readOnly ? '' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' +
+    return '<div class="page-head"><div><h1 class="page-title">' + (readOnly ? 'Minhas demandas' : 'Painel geral dos sócios') + '</h1><p class="page-desc">' + (readOnly ? 'Tarefas e conteúdos atribuídos a você como responsável ou Parceiro PJ' : 'Tarefas e conteúdos compartilhados, responsáveis, prazos e entregas') + '</p></div>' + (readOnly ? '' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' +
       '<div class="content-toolbar">' + (readOnly ? '<select id="task-status-filter" onchange="renderTasks()"><option value="">Todas as situações</option><option>Pendente</option><option>Em andamento</option><option>Atrasado</option><option>Concluído</option></select>' : '<select id="task-company-filter" onchange="renderTasks()"><option value="">Todas as empresas</option></select><select id="task-person-filter" onchange="renderTasks()"><option value="">Todos os responsáveis</option></select>') + '<button class="btn btn-ghost" onclick="loadTasks()">Atualizar</button></div>' +
       loading('tasks-area', readOnly ? 'Carregando suas demandas...' : 'Carregando atividades dos sócios...');
   };
@@ -1069,14 +1120,14 @@
     var area = document.getElementById('tasks-area'); if (!area) return;
     try {
       if (!canManageAgencyTasks()) {
-        var ownPayload = await api('/api/tasks');
+        var ownPayload = await api('/api/work-items');
         state.tasks = ownPayload.tasks || [];
         state.taskOptionsLoaded = false;
         renderTasks();
         return;
       }
       var values = await Promise.all([
-        api('/api/tasks'),
+        api('/api/work-items'),
         state.companies.length ? Promise.resolve({ companies: state.companies }) : api('/api/companies'),
         api('/api/access'),
         state.partners.length ? Promise.resolve({ partners: state.partners }) : api('/api/partners')
@@ -1089,9 +1140,7 @@
       var companyFilter = document.getElementById('task-company-filter');
       var personFilter = document.getElementById('task-person-filter');
       if (companyFilter) companyFilter.innerHTML = options(state.companies.map(function (company) { return { value: company.id, label: company.name }; }), companyFilter.value, 'Todas as empresas');
-      var team = state.accesses.filter(function (access) { return access.role === 'agency_owner' || access.role === 'agency_member' || access.role === 'collaborator'; });
-      var responsibleOptions = team.map(function (access) { return { value: access.id, label: access.name || access.email }; }).concat(state.partners.map(function (partner) { return { value: partner.id, label: 'Parceiro · ' + partner.name }; }));
-      if (personFilter) personFilter.innerHTML = options(responsibleOptions, personFilter.value, 'Todos os responsáveis');
+      if (personFilter) personFilter.innerHTML = options(responsibleFilterOptions(), personFilter.value, 'Todos os responsáveis');
       renderTasks();
     } catch (error) {
       area.innerHTML = empty(canManageAgencyTasks() ? 'Não foi possível abrir o painel dos sócios' : 'Não foi possível abrir suas demandas', error.message, '<button class="btn btn-primary" onclick="loadTasks()">Tentar novamente</button>');
@@ -1106,20 +1155,29 @@
     var status = document.getElementById('task-status-filter') ? document.getElementById('task-status-filter').value : '';
     var readOnly = !canManageAgencyTasks();
     var visible = state.tasks.filter(function (task) {
-      return (!companyId || task.tenantId === companyId) && (!person || task.assignedTo === person || task.partnerId === person) && (!status || task.displayStatus === status);
+      return (!companyId || task.tenantId === companyId) && workItemMatchesPerson(task, person) && (!status || task.displayStatus === status);
     });
     var columns = ['Pendente', 'Em andamento', 'Atrasado', 'Concluído'];
     var colors = { 'Pendente': '#94a3b8', 'Em andamento': '#2563eb', 'Atrasado': '#dc2626', 'Concluído': '#16a34a' };
     if (!visible.length) {
-      area.innerHTML = empty(readOnly ? 'Nenhuma demanda atribuída a você' : 'Nenhuma atividade encontrada', readOnly ? 'Quando um sócio atribuir uma demanda ao seu perfil, ela aparecerá aqui.' : 'Crie uma atividade ou altere os filtros para acompanhar o trabalho dos sócios.', readOnly ? '' : '<button class="btn btn-primary" onclick="openTaskForm()">Criar atividade</button>');
+      area.innerHTML = empty(readOnly ? 'Nenhuma demanda ou conteúdo atribuído a você' : 'Nenhuma atividade encontrada', readOnly ? 'Quando um sócio atribuir uma tarefa ou conteúdo ao seu perfil, o item aparecerá aqui.' : 'Crie uma atividade ou altere os filtros para acompanhar o trabalho dos sócios.', readOnly ? '' : '<button class="btn btn-primary" onclick="openTaskForm()">Criar atividade</button>');
       return;
     }
     area.innerHTML = '<div class="task-board">' + columns.map(function (column) {
       var tasks = visible.filter(function (task) { return task.displayStatus === column; });
       return '<section class="task-column"><div class="task-column-head"><span><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + colors[column] + ';margin-right:6px"></i>' + column + '</span><span class="kb-count">' + tasks.length + '</span></div>' +
         (tasks.length ? tasks.map(function (task) {
-          return '<article class="task-item' + (readOnly ? ' task-item-clickable' : '') + '"' + (readOnly ? ' role="button" tabindex="0" onclick="openTaskDetails(\'' + esc(task.id) + '\')" onkeydown="openTaskDetailsByKeyboard(event,\'' + esc(task.id) + '\')"' : '') + ' data-search="' + esc([task.title, task.companyName, task.taskType, task.assignedToName, task.partnerName, task.displayStatus].join(' ')) + '" style="border-left-color:' + colors[column] + '"><div class="kb-tags"><span class="tag tag-roxo">' + esc(task.taskType) + '</span><span class="tag ' + (task.priority === 'Alta' || task.priority === 'Urgente' ? 'tag-vermelho' : task.priority === 'Média' ? 'tag-amarelo' : 'tag-cinza') + '">' + esc(task.priority) + '</span></div><h4>' + esc(task.title) + '</h4><div class="task-meta">' + esc(task.companyName || 'Atividade interna') + '<br>Entrega: ' + esc(dateBR(task.dueDate)) + '<br>Responsável interno: ' + esc(task.assignedToName || 'Não definido') + (task.partnerName ? '<br>Parceiro responsável: ' + esc(task.partnerName) : '') + '</div>' +
-            '<div class="task-actions">' + (readOnly ? '<span class="btn-xs">Ver detalhes</span>' : (column !== 'Concluído' ? '<button class="btn-xs" onclick="completeTask(\'' + esc(task.id) + '\')">✓ Concluir</button>' : '<button class="btn-xs" onclick="reopenTask(\'' + esc(task.id) + '\')">Reabrir</button>') + '<button class="btn-xs" onclick="openTaskForm(\'' + esc(task.id) + '\')">Editar</button><button class="btn-xs" style="color:var(--vermelho)" onclick="deleteTask(\'' + esc(task.id) + '\')">Excluir</button>') + '</div></article>';
+          var contentItem = task.entityType === 'post';
+          var clickable = readOnly || contentItem;
+          var secondaryTag = contentItem
+            ? '<span class="tag tag-azul">Calendário de Posts</span>'
+            : '<span class="tag ' + (task.priority === 'Alta' || task.priority === 'Urgente' ? 'tag-vermelho' : task.priority === 'Média' ? 'tag-amarelo' : 'tag-cinza') + '">' + esc(task.priority) + '</span>';
+          var actions = contentItem
+            ? '<span class="btn-xs">Abrir conteúdo</span>'
+            : readOnly
+              ? '<span class="btn-xs">Ver detalhes</span>'
+              : (column !== 'Concluído' ? '<button class="btn-xs" onclick="completeTask(\'' + esc(task.id) + '\')">✓ Concluir</button>' : '<button class="btn-xs" onclick="reopenTask(\'' + esc(task.id) + '\')">Reabrir</button>') + '<button class="btn-xs" onclick="openTaskForm(\'' + esc(task.id) + '\')">Editar</button><button class="btn-xs" style="color:var(--vermelho)" onclick="deleteTask(\'' + esc(task.id) + '\')">Excluir</button>';
+          return '<article class="task-item' + (clickable ? ' task-item-clickable' : '') + '"' + (clickable ? ' role="button" tabindex="0" onclick="openWorkItem(\'' + esc(task.id) + '\')" onkeydown="openWorkItemByKeyboard(event,\'' + esc(task.id) + '\')"' : '') + ' data-search="' + esc([task.title, task.companyName, task.taskType, task.sourceLabel, task.assignedToName, task.partnerName, task.displayStatus].join(' ')) + '" style="border-left-color:' + colors[column] + '"><div class="kb-tags"><span class="tag tag-roxo">' + esc(task.taskType) + '</span>' + secondaryTag + '</div><h4>' + esc(task.title) + '</h4><div class="task-meta">' + esc(task.companyName || 'Atividade interna') + '<br>' + (contentItem ? 'Publicação' : 'Entrega') + ': ' + esc(dateBR(task.dueDate)) + (task.scheduledTime ? ' às ' + esc(task.scheduledTime) : '') + '<br>Responsável interno: ' + esc(task.assignedToName || 'Não definido') + (task.partnerName ? '<br>Parceiro responsável: ' + esc(task.partnerName) : '') + '</div><div class="task-actions">' + actions + '</div></article>';
         }).join('') : '<div class="page-desc" style="text-align:center;padding:20px 4px">Nenhuma atividade</div>') + '</section>';
     }).join('') + '</div>';
   }
@@ -1322,34 +1380,35 @@
     window.setTimeout(loadDashboard, 0);
     var actor = state.session && state.session.actor; var name = actor ? (actor.name || actor.email) : 'equipe';
     var readOnly = !canManageAgencyTasks();
-    return '<div class="page-head"><div><h1 class="page-title">Olá, ' + esc(name.split(' ')[0]) + ' 👋</h1><p class="page-desc">' + (readOnly ? 'Acompanhe as demandas atribuídas ao seu perfil ou cadastro de Parceiro PJ' : 'Visão real da operação da Óriva hoje') + '</p></div>' + (readOnly ? '<button class="btn btn-ghost" onclick="irPara(\'tarefas\')">Ver minhas demandas</button>' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' + loading('dashboard-real-area', 'Atualizando indicadores...');
+    return '<div class="page-head"><div><h1 class="page-title">Olá, ' + esc(name.split(' ')[0]) + ' 👋</h1><p class="page-desc">' + (readOnly ? 'Acompanhe as tarefas e conteúdos atribuídos ao seu perfil ou cadastro de Parceiro PJ' : 'Visão real da operação da Óriva hoje') + '</p></div>' + (readOnly ? '<button class="btn btn-ghost" onclick="irPara(\'tarefas\')">Ver minhas demandas</button>' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' + loading('dashboard-real-area', 'Atualizando indicadores...');
   };
 
   async function loadDashboard() {
     var area = document.getElementById('dashboard-real-area'); if (!area) return;
     try {
       if (!canManageAgencyTasks()) {
-        var ownPayload = await api('/api/tasks');
+        var ownPayload = await api('/api/work-items');
         state.tasks = ownPayload.tasks || [];
         var ownPending = state.tasks.filter(function (task) { return task.status !== 'Concluído'; });
         var ownOverdue = state.tasks.filter(function (task) { return task.displayStatus === 'Atrasado'; });
         var ownCompleted = state.tasks.filter(function (task) { return task.status === 'Concluído'; });
         var ownUpcoming = ownPending.slice().sort(function (a, b) { return a.dueDate.localeCompare(b.dueDate); }).slice(0, 8);
-        area.innerHTML = '<div class="grid g-3" style="margin-bottom:22px">' + kpi('tarefas', String(ownPending.length), 'Minhas demandas abertas', '', '', "irPara('tarefas')") + kpi('clock', String(ownOverdue.length), 'Minhas demandas atrasadas', '', '', "irPara('tarefas')") + kpi('check', String(ownCompleted.length), 'Minhas demandas concluídas', '', '', "irPara('tarefas')") + '</div>' + (ownUpcoming.length ? '<div class="card"><div class="card-h"><h3>Próximas entregas atribuídas a você</h3><button class="btn btn-ghost" onclick="irPara(\'agenda\')">Abrir minha agenda</button></div>' + ownUpcoming.map(function (task) { return '<button class="dashboard-line" onclick="openTaskDetails(\'' + esc(task.id) + '\')"><span><b>' + esc(task.title) + '</b><small>' + esc(task.companyName || 'Atividade interna') + ' · ' + esc(task.displayStatus) + '</small></span><strong class="' + (task.displayStatus === 'Atrasado' ? 'danger-text' : '') + '">' + esc(dateBR(task.dueDate)) + '</strong></button>'; }).join('') + '</div>' : empty('Nenhuma demanda atribuída a você', 'Quando um sócio atribuir uma atividade ao seu perfil, ela aparecerá aqui.', ''));
+        area.innerHTML = '<div class="grid g-3" style="margin-bottom:22px">' + kpi('tarefas', String(ownPending.length), 'Minhas demandas abertas', '', '', "irPara('tarefas')") + kpi('clock', String(ownOverdue.length), 'Minhas demandas atrasadas', '', '', "irPara('tarefas')") + kpi('check', String(ownCompleted.length), 'Minhas demandas concluídas', '', '', "irPara('tarefas')") + '</div>' + (ownUpcoming.length ? '<div class="card"><div class="card-h"><h3>Próximas entregas atribuídas a você</h3><button class="btn btn-ghost" onclick="irPara(\'agenda\')">Abrir minha agenda</button></div>' + ownUpcoming.map(function (task) { return '<button class="dashboard-line" onclick="openWorkItem(\'' + esc(task.id) + '\')"><span><b>' + esc(task.title) + '</b><small>' + esc(task.companyName || 'Atividade interna') + ' · ' + esc(task.sourceLabel || 'Tarefa') + ' · ' + esc(task.displayStatus) + '</small></span><strong class="' + (task.displayStatus === 'Atrasado' ? 'danger-text' : '') + '">' + esc(dateBR(task.dueDate)) + '</strong></button>'; }).join('') + '</div>' : empty('Nenhuma demanda ou conteúdo atribuído a você', 'Quando um sócio atribuir uma tarefa ou conteúdo ao seu perfil, o item aparecerá aqui.', ''));
         return;
       }
       var month = new Date().toISOString().slice(0, 7);
       var canViewFinance = typeof window.canAccessOrivaPage !== 'function' || window.canAccessOrivaPage('financeiro');
-      var values = await Promise.all([api('/api/tasks'), api('/api/companies'), canViewFinance ? api('/api/finance?month=' + month) : Promise.resolve({ entries: [] }), api('/api/dashboard')]);
+      var values = await Promise.all([api('/api/work-items'), api('/api/companies'), canViewFinance ? api('/api/finance?month=' + month) : Promise.resolve({ entries: [] }), api('/api/dashboard')]);
       state.tasks = values[0].tasks || []; state.companies = values[1].companies || []; state.finance = values[2].entries || [];
-      var awaitingApproval = values[3].awaitingApproval || []; var partnerTasks = values[3].partnerTasks || [];
+      var awaitingApproval = values[3].awaitingApproval || [];
+      var partnerTasks = state.tasks.filter(function (task) { return task.partnerId && task.displayStatus !== 'Concluído'; });
       var pending = state.tasks.filter(function (task) { return task.status !== 'Concluído'; });
       var overdue = state.tasks.filter(function (task) { return task.displayStatus === 'Atrasado'; });
       var activeCompanies = state.companies.filter(function (company) { return company.status === 'Ativo'; });
       var receivable = state.finance.filter(function (entry) { return entry.kind === 'receita' && entry.status !== 'Pago' && entry.status !== 'Cancelado'; }).reduce(function (sum, entry) { return sum + Number(entry.amountCents || 0); }, 0);
       var upcoming = pending.slice().sort(function (a, b) { return a.dueDate.localeCompare(b.dueDate); }).slice(0, 6);
       area.innerHTML = '<div class="grid g-3 dashboard-highlight-grid" style="margin-bottom:18px">' + kpi('clock', String(overdue.length), 'Demandas em atraso', '', '', "irPara('tarefas')") + kpi('agenda', String(awaitingApproval.length), 'Projetos em aprovação', '', '', "irPara('calendario-posts')") + kpi('parceiros', String(partnerTasks.length), 'Demandas com parceiros', '', '', "irPara('tarefas')") + '</div><div class="grid ' + (canViewFinance ? 'g-3' : 'g-2') + '" style="margin-bottom:24px">' + kpi('tarefas', String(pending.length), 'Atividades pendentes', '', '', "irPara('tarefas')") + kpi('clientes', String(activeCompanies.length), 'Empresas ativas', '', '', "irPara('clientes')") + (canViewFinance ? kpi('financeiro', money(receivable), 'A receber no mês', '', '', "irPara('financeiro')") : '') + '</div>' +
-        '<div class="dashboard-operations-grid">' + dashboardListCard('Demandas em atraso', overdue, function (task) { return '<button class="dashboard-line" onclick="openTaskForm(\'' + esc(task.id) + '\')"><span><b>' + esc(task.title) + '</b><small>' + esc(task.companyName || 'Atividade interna') + '</small></span><strong class="danger-text">' + esc(dateBR(task.dueDate)) + '</strong></button>'; }, 'Nenhuma demanda atrasada.') + dashboardListCard('Em aprovação pelo cliente', awaitingApproval, function (post) { return '<button class="dashboard-line" onclick="abrirCalendarioEmpresa(\'' + esc(post.companyId) + '\')"><span><b>' + esc(post.title) + '</b><small>' + esc(post.companyName || 'Empresa') + '</small></span><strong>' + esc(dateBR(post.date)) + '</strong></button>'; }, 'Nenhum projeto aguardando aprovação.') + dashboardListCard('Demandas atribuídas a parceiros', partnerTasks, function (task) { return '<button class="dashboard-line" onclick="openTaskForm(\'' + esc(task.id) + '\')"><span><b>' + esc(task.title) + '</b><small>' + esc(task.companyName || 'Empresa') + ' · ' + esc(task.partnerName) + '</small></span><strong>' + esc(dateBR(task.dueDate)) + '</strong></button>'; }, 'Nenhuma demanda com parceiro.') + '</div>' +
+        '<div class="dashboard-operations-grid">' + dashboardListCard('Demandas em atraso', overdue, function (task) { return '<button class="dashboard-line" onclick="openWorkItem(\'' + esc(task.id) + '\')"><span><b>' + esc(task.title) + '</b><small>' + esc(task.companyName || 'Atividade interna') + ' · ' + esc(task.sourceLabel || 'Tarefa') + '</small></span><strong class="danger-text">' + esc(dateBR(task.dueDate)) + '</strong></button>'; }, 'Nenhuma demanda atrasada.') + dashboardListCard('Em aprovação pelo cliente', awaitingApproval, function (post) { return '<button class="dashboard-line" onclick="abrirConteudoAgenda(\'' + esc(post.companyId) + '\',\'' + esc(post.id) + '\')"><span><b>' + esc(post.title) + '</b><small>' + esc(post.companyName || 'Empresa') + '</small></span><strong>' + esc(dateBR(post.date)) + '</strong></button>'; }, 'Nenhum projeto aguardando aprovação.') + dashboardListCard('Demandas atribuídas a parceiros', partnerTasks, function (task) { return '<button class="dashboard-line" onclick="openWorkItem(\'' + esc(task.id) + '\')"><span><b>' + esc(task.title) + '</b><small>' + esc(task.companyName || 'Empresa') + ' · ' + esc(task.partnerName) + ' · ' + esc(task.sourceLabel || 'Tarefa') + '</small></span><strong>' + esc(dateBR(task.dueDate)) + '</strong></button>'; }, 'Nenhuma demanda com parceiro.') + '</div>' +
         (upcoming.length ? '<div class="card" style="margin-top:18px"><div class="card-h"><h3>Próximas entregas</h3><button class="btn btn-ghost" onclick="irPara(\'tarefas\')">Abrir painel dos sócios</button></div>' + upcoming.map(function (task) { return '<div class="lista-item" data-search="' + esc([task.title, task.companyName, task.assignedToName, task.partnerName].join(' ')) + '"><div class="dot-ico" style="background:var(--roxo-claro);color:var(--roxo)">' + ico.clock + '</div><div class="li-body"><div class="li-title">' + esc(task.title) + '</div><div class="li-sub">' + esc(task.companyName || 'Atividade interna') + ' · ' + esc(task.partnerName || task.assignedToName || 'Sem responsável') + '</div></div><span class="li-meta">' + esc(dateBR(task.dueDate)) + '</span><span class="tag ' + (task.displayStatus === 'Atrasado' ? 'tag-vermelho' : 'tag-amarelo') + '">' + esc(task.displayStatus) + '</span></div>'; }).join('') + '</div>' : '');
     } catch (error) { area.innerHTML = empty('Não foi possível carregar o painel', error.message, '<button class="btn btn-primary" onclick="loadDashboard()">Tentar novamente</button>'); }
   }
@@ -1362,7 +1421,7 @@
   paginas.agenda = function () {
     window.setTimeout(loadAgenda, 0);
     var readOnly = !canManageAgencyTasks();
-    return '<div class="page-head"><div><h1 class="page-title">' + (readOnly ? 'Minha agenda' : 'Agenda de entregas') + '</h1><p class="page-desc">' + (readOnly ? 'Prazos das atividades atribuídas ao seu perfil ou cadastro de Parceiro PJ' : 'Prazos reais dos projetos e atividades da agência') + '</p></div>' + (readOnly ? '' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' +
+    return '<div class="page-head"><div><h1 class="page-title">' + (readOnly ? 'Minha agenda' : 'Agenda de entregas') + '</h1><p class="page-desc">' + (readOnly ? 'Prazos das tarefas e conteúdos atribuídos ao seu perfil ou cadastro de Parceiro PJ' : 'Prazos reais das tarefas e conteúdos da agência') + '</p></div>' + (readOnly ? '' : '<button class="btn btn-primary" onclick="openTaskForm()">+ Nova atividade</button>') + '</div>' +
       '<div class="content-toolbar">' + (readOnly ? '' : '<select id="agenda-company-filter" onchange="renderAgenda()"><option value="">Todas as empresas</option></select><select id="agenda-person-filter" onchange="renderAgenda()"><option value="">Todos os responsáveis</option></select>') + '<select id="agenda-status-filter" onchange="renderAgenda()"><option value="">Todas as situações</option><option>Pendente</option><option>Em andamento</option><option>Atrasado</option><option>Concluído</option></select><button class="btn btn-ghost" onclick="goAgendaToday()">Hoje</button><div class="agenda-nav"><button class="btn btn-ghost" aria-label="Semana anterior" onclick="moveAgenda(-1)">‹</button><button class="btn btn-ghost" aria-label="Próxima semana" onclick="moveAgenda(1)">›</button></div></div>' + loading('agenda-area', readOnly ? 'Carregando sua agenda...' : 'Carregando agenda...');
   };
 
@@ -1370,14 +1429,14 @@
     var area = document.getElementById('agenda-area'); if (!area) return;
     try {
       if (!canManageAgencyTasks()) {
-        var ownPayload = await api('/api/tasks');
+        var ownPayload = await api('/api/work-items');
         state.tasks = ownPayload.tasks || [];
         state.taskOptionsLoaded = false;
         renderAgenda();
         return;
       }
       var values = await Promise.all([
-        api('/api/tasks'),
+        api('/api/work-items'),
         state.companies.length ? Promise.resolve({ companies: state.companies }) : api('/api/companies'),
         state.accesses.length ? Promise.resolve({ accesses: state.accesses }) : api('/api/access'),
         state.partners.length ? Promise.resolve({ partners: state.partners }) : api('/api/partners')
@@ -1390,9 +1449,7 @@
       var companyFilter = document.getElementById('agenda-company-filter');
       var personFilter = document.getElementById('agenda-person-filter');
       if (companyFilter) companyFilter.innerHTML = options(state.companies.map(function (company) { return { value: company.id, label: company.name }; }), companyFilter.value, 'Todas as empresas');
-      var team = state.accesses.filter(function (access) { return access.role === 'agency_owner' || access.role === 'agency_member' || access.role === 'collaborator'; });
-      var agendaPeople = team.map(function (access) { return { value: access.id, label: access.name || access.email }; }).concat(state.partners.map(function (partner) { return { value: partner.id, label: 'Parceiro · ' + partner.name }; }));
-      if (personFilter) personFilter.innerHTML = options(agendaPeople, personFilter.value, 'Todos os responsáveis');
+      if (personFilter) personFilter.innerHTML = options(responsibleFilterOptions(), personFilter.value, 'Todos os responsáveis');
       renderAgenda();
     } catch (error) {
       area.innerHTML = empty(canManageAgencyTasks() ? 'Não foi possível abrir a agenda' : 'Não foi possível abrir sua agenda', error.message, '<button class="btn btn-primary" onclick="loadAgenda()">Tentar novamente</button>');
@@ -1414,7 +1471,7 @@
     var readOnly = !canManageAgencyTasks();
     var start = agendaWeekStart(state.agendaCursor); var end = new Date(start); end.setDate(start.getDate() + 6);
     var visible = state.tasks.filter(function (task) {
-      return (!companyId || task.tenantId === companyId) && (!personId || task.assignedTo === personId || task.partnerId === personId) && (!status || task.displayStatus === status);
+      return (!companyId || task.tenantId === companyId) && workItemMatchesPerson(task, personId) && (!status || task.displayStatus === status);
     });
     var title = start.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) + ' — ' + end.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
     var today = new Date().toISOString().slice(0, 10);
@@ -1426,7 +1483,13 @@
       days += '<section class="agenda-day' + (key === today ? ' today' : '') + '"><div class="agenda-day-head"><span>' + esc(date.toLocaleDateString('pt-BR', { weekday: 'short' })) + '</span><b>' + date.getDate() + '</b><small>' + tasks.length + ' atividade' + (tasks.length === 1 ? '' : 's') + '</small></div><div class="agenda-day-body">' +
         (tasks.length ? tasks.map(function (task) {
           var color = task.displayStatus === 'Atrasado' ? '#dc2626' : task.displayStatus === 'Concluído' ? '#16a34a' : task.displayStatus === 'Em andamento' ? '#2563eb' : '#7c3aed';
-          return '<article class="agenda-task" data-search="' + esc([task.title, task.companyName, task.assignedToName, task.partnerName, task.displayStatus].join(' ')) + '" style="border-left-color:' + color + '"><button class="agenda-task-main" onclick="' + (readOnly ? 'openTaskDetails' : 'openTaskForm') + '(\'' + esc(task.id) + '\')"><strong>' + esc(task.title) + '</strong><span>' + esc(task.companyName || 'Atividade interna') + '</span><span>' + esc(task.partnerName || task.assignedToName || 'Sem responsável') + ' · ' + esc(task.displayStatus) + '</span></button>' + (readOnly ? '' : '<div class="agenda-task-actions">' + (task.displayStatus !== 'Concluído' ? '<button class="btn-xs" onclick="completeTask(\'' + esc(task.id) + '\')">Concluir</button>' : '<button class="btn-xs" onclick="reopenTask(\'' + esc(task.id) + '\')">Reabrir</button>') + '<button class="btn-xs" style="color:var(--vermelho)" onclick="deleteTask(\'' + esc(task.id) + '\')">Excluir</button></div>') + '</article>';
+          var contentItem = task.entityType === 'post';
+          var actions = readOnly
+            ? ''
+            : contentItem
+              ? '<div class="agenda-task-actions"><button class="btn-xs" onclick="openWorkItem(\'' + esc(task.id) + '\')">Abrir conteúdo</button></div>'
+              : '<div class="agenda-task-actions">' + (task.displayStatus !== 'Concluído' ? '<button class="btn-xs" onclick="completeTask(\'' + esc(task.id) + '\')">Concluir</button>' : '<button class="btn-xs" onclick="reopenTask(\'' + esc(task.id) + '\')">Reabrir</button>') + '<button class="btn-xs" style="color:var(--vermelho)" onclick="deleteTask(\'' + esc(task.id) + '\')">Excluir</button></div>';
+          return '<article class="agenda-task" data-search="' + esc([task.title, task.companyName, task.sourceLabel, task.assignedToName, task.partnerName, task.displayStatus].join(' ')) + '" style="border-left-color:' + color + '"><button class="agenda-task-main" onclick="openWorkItem(\'' + esc(task.id) + '\')"><strong>' + esc(task.title) + '</strong><span>' + esc(task.companyName || 'Atividade interna') + ' · ' + esc(task.sourceLabel || 'Tarefa') + '</span><span>' + esc(task.partnerName || task.assignedToName || 'Sem responsável') + ' · ' + esc(task.displayStatus) + (task.scheduledTime ? ' · ' + esc(task.scheduledTime) : '') + '</span></button>' + actions + '</article>';
         }).join('') : '<div class="agenda-empty-day">Sem entregas</div>') + '</div></section>';
     }
     area.innerHTML = '<div class="calendar-shell"><div class="calendar-titlebar"><div><h3>' + esc(title) + '</h3><div class="page-desc">' + visible.length + ' atividade' + (visible.length === 1 ? '' : 's') + ' nos filtros atuais</div></div></div><div class="agenda-week-grid">' + days + '</div></div>';

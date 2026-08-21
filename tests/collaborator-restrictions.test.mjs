@@ -15,7 +15,7 @@ test("collaborators see only their own dashboard, demands, agenda and assigned c
   assert.match(html, /visibleNavItems\(navConfig\[perfilAtual\]/);
   assert.match(html, /if\(!canAccessOrivaPage\(id\)\)/);
   assert.match(management, /window\.canAccessOrivaPage\('financeiro'\)/);
-  assert.match(management, /Atividades atribuídas a você como responsável ou Parceiro PJ/);
+  assert.match(management, /Tarefas e conteúdos atribuídos a você como responsável ou Parceiro PJ/);
   assert.match(management, /Apenas os sócios podem criar novas demandas/);
   assert.match(management, /function saveAssignedTask\(/);
   assert.match(management, /function loadAssignedTaskFiles\(/);
