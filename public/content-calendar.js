@@ -29,6 +29,7 @@
     'Publicado': '#7c3aed'
   };
   var companySlugs = {};
+  var lastResponsiveMode = '';
 
   function esc(value) {
     return String(value == null ? '' : value)
@@ -173,9 +174,26 @@
   function abrirConteudoAgenda(tenantId, postId) {
     contentState.tenantId = tenantId;
     contentState.pendingPostId = postId;
-    irPara('calendario-posts');
+    contentState.filters = { status: '', content_type: '', social_network: '' };
+    var actor = currentActor();
+    irPara(actor.role === 'empresa_cliente' ? 'c-conteudo' : 'calendario-posts');
   }
   window.abrirConteudoAgenda = abrirConteudoAgenda;
+
+  function bindContentCalendarInteractions(area) {
+    if (!area || area.dataset.contentInteractionsBound === 'true') return;
+    area.dataset.contentInteractionsBound = 'true';
+    area.addEventListener('click', function (event) {
+      var trigger = event.target.closest('[data-content-post-id]');
+      if (!trigger || !area.contains(trigger)) return;
+      event.preventDefault();
+      openContentDetails(trigger.dataset.contentPostId);
+    });
+  }
+
+  function contentOpenAttributes(postId, label) {
+    return ' type="button" data-content-post-id="' + esc(postId) + '" aria-label="' + esc(label || 'Abrir conteúdo') + '"';
+  }
 
   async function apiJson(url, options, retried) {
     var response;
@@ -197,6 +215,8 @@
   async function initContentCalendar() {
     var area = document.getElementById('content-calendar-area');
     if (!area) return;
+    lastResponsiveMode = responsiveCalendarMode();
+    bindContentCalendarInteractions(area);
     try {
       var payload = await apiJson('/api/companies');
       contentState.companies = payload.companies || [];
@@ -286,14 +306,18 @@
       if (contentState.clientMode) contentState.permissions.canManage = false;
       var button = document.getElementById('new-content-main');
       if (button) button.style.display = contentState.permissions.canManage ? 'inline-flex' : 'none';
-      renderContentCalendar();
       if (contentState.pendingPostId) {
         var pendingId = contentState.pendingPostId;
         contentState.pendingPostId = '';
-        if (contentState.posts.some(function (post) { return post.id === pendingId; })) {
+        var pendingPost = contentState.posts.find(function (post) { return post.id === pendingId; });
+        if (pendingPost) {
+          contentState.cursor = parseDate(pendingPost.scheduledDate);
+          renderContentCalendar();
           window.setTimeout(function () { openContentDetails(pendingId); }, 0);
+          return;
         }
       }
+      renderContentCalendar();
     } catch (error) {
       renderCalendarError(error.message);
     }
@@ -363,6 +387,22 @@
     else area.innerHTML = renderMonth();
   }
 
+  function responsiveCalendarMode() {
+    return window.innerWidth <= 760 ? 'compact' : 'wide';
+  }
+
+  function syncCalendarOnResize() {
+    var nextMode = responsiveCalendarMode();
+    if (nextMode === lastResponsiveMode) return;
+    lastResponsiveMode = nextMode;
+    if (document.getElementById('content-calendar-area')) renderContentCalendar();
+  }
+
+  window.addEventListener('resize', function () {
+    window.clearTimeout(syncCalendarOnResize.timer);
+    syncCalendarOnResize.timer = window.setTimeout(syncCalendarOnResize, 120);
+  });
+
   function calendarTitle(title) {
     return [
       '<div class="calendar-titlebar">',
@@ -378,10 +418,10 @@
 
   function postPill(post) {
     var color = statusColors[post.status] || '#7c3aed';
-    return '<button class="post-pill" title="' + esc(post.scheduledTime + ' · ' + post.title) +
+    return '<button' + contentOpenAttributes(post.id, 'Abrir ' + post.title) + ' class="post-pill" title="' + esc(post.scheduledTime + ' · ' + post.title) +
       '" style="border-left-color:' + color + ';background:' + color + '14;color:' + color +
-      '" onclick="openContentDetails(\'' + esc(post.id) + '\')">' +
-      esc(post.scheduledTime + ' · ' + post.contentType + ' · ' + post.status) + '</button>';
+      '"><strong>' + esc(post.title) + '</strong><span>' +
+      esc(post.scheduledTime + ' · ' + post.contentType + ' · ' + post.status) + '</span></button>';
   }
 
   function renderMonth() {
@@ -437,8 +477,8 @@
         '<div class="week-day">',
           '<div class="week-day-head"><span>' + date.toLocaleDateString('pt-BR', { weekday: 'short' }) + '</span><b>' + date.getDate() + '</b></div>',
           posts.length ? posts.map(function (post) {
-            return '<button class="week-post" style="width:100%;text-align:left;border-left-color:' + (statusColors[post.status] || '#7c3aed') +
-              '" onclick="openContentDetails(\'' + esc(post.id) + '\')"><div class="time">' +
+            return '<button' + contentOpenAttributes(post.id, 'Abrir ' + post.title) + ' class="week-post" style="width:100%;text-align:left;border-left-color:' + (statusColors[post.status] || '#7c3aed') +
+              '"><div class="time">' +
               esc(post.scheduledTime + ' · ' + post.socialNetwork) + '</div><div class="title">' +
               esc(post.title) + '</div><div class="time" style="margin-top:5px;color:' +
               (statusColors[post.status] || '#7c3aed') + '">' + esc(post.status) + '</div></button>';
@@ -470,7 +510,7 @@
     var cards = sorted.map(function (post) {
       var color = statusColors[post.status] || '#7c3aed';
       return [
-        '<button class="post-list-card" style="width:100%;text-align:left" onclick="openContentDetails(\'' + esc(post.id) + '\')">',
+        '<button' + contentOpenAttributes(post.id, 'Abrir ' + post.title) + ' class="post-list-card" style="width:100%;text-align:left">',
           previewSmall(post),
           '<div><div class="post-list-title">' + esc(post.title) + '</div>',
             '<div class="post-list-meta"><span>' + esc(formatDate(post.scheduledDate)) + ' às ' + esc(post.scheduledTime) + '</span>',

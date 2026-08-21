@@ -244,8 +244,9 @@ tbody tr:hover{background:#fafafb}
 .posts-day.today{background:linear-gradient(180deg,#faf7ff 0,#fff 50%)}
 .posts-day-num{width:27px;height:27px;display:flex;align-items:center;justify-content:center;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:5px}
 .posts-day.today .posts-day-num{background:var(--roxo);color:#fff}
-.post-pill{width:100%;text-align:left;padding:6px 7px;border-radius:7px;margin:3px 0;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:3px solid var(--roxo);background:var(--roxo-claro);color:var(--roxo-escuro)}
-.post-pill:hover{filter:brightness(.97)}
+.post-pill{width:100%;text-align:left;padding:6px 7px;border-radius:7px;margin:3px 0;font-size:11px;font-weight:700;overflow:hidden;border-left:3px solid var(--roxo);background:var(--roxo-claro);color:var(--roxo-escuro)}
+.post-pill strong,.post-pill span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.post-pill strong{font-size:11px}.post-pill span{font-size:9px;margin-top:2px;opacity:.82}
+.post-pill:hover,.post-pill:focus-visible,.week-post:focus-visible,.post-list-card:focus-visible{filter:brightness(.97);outline:2px solid var(--roxo);outline-offset:2px}
 .status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
 .posts-list{display:grid;gap:12px}
 .post-list-card{background:#fff;border:1px solid var(--cinza-borda);border-radius:14px;padding:15px;display:grid;grid-template-columns:72px 1fr auto;gap:14px;align-items:center;transition:.15s}
@@ -720,8 +721,8 @@ function paginaCarregando(titulo){
 
 </script>
 <script src="/auth-session.js"></script>
-<script src="/content-calendar.js?v=20260821-2"></script>
-<script src="/management.js?v=20260821-2"></script>
+<script src="/content-calendar.js?v=20260821-3"></script>
+<script src="/management.js?v=20260821-3"></script>
 <script src="/chat.js?v=20260820-1"></script>
 </body>
 </html>

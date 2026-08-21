@@ -60,6 +60,26 @@ test("overview, task board and agenda unify tasks with assigned calendar content
   assert.match(calendar, /function abrirConteudoAgenda\(/);
   assert.match(calendar, /openContentDetails\(pendingId\)/);
   assert.match(html, /\.task-item-clickable:hover,\.task-item-clickable:focus-visible/);
-  assert.match(html, /management\.js\?v=20260821-2/);
-  assert.match(html, /content-calendar\.js\?v=20260821-2/);
+  assert.match(html, /management\.js\?v=20260821-3/);
+  assert.match(html, /content-calendar\.js\?v=20260821-3/);
+});
+
+test("calendar contents open the same item on desktop, tablet and mobile", async () => {
+  const [management, calendar, html] = await Promise.all([
+    read("public/management.js"),
+    read("public/content-calendar.js"),
+    read("public/oriva-plataforma.html"),
+  ]);
+
+  assert.match(calendar, /function bindContentCalendarInteractions\(/);
+  assert.match(calendar, /closest\('\[data-content-post-id\]'\)/);
+  assert.match(calendar, /function contentOpenAttributes\(/);
+  assert.match(calendar, /contentOpenAttributes\(post\.id[\s\S]*class="post-pill"/);
+  assert.match(calendar, /contentOpenAttributes\(post\.id[\s\S]*class="week-post"/);
+  assert.match(calendar, /contentOpenAttributes\(post\.id[\s\S]*class="post-list-card"/);
+  assert.match(calendar, /contentState\.filters = \{ status: '', content_type: '', social_network: '' \}/);
+  assert.match(calendar, /contentState\.cursor = parseDate\(pendingPost\.scheduledDate\)/);
+  assert.match(management, /function companyCalendarEventButton[\s\S]{0,400}abrirConteudoAgenda/);
+  assert.match(management, /Abrir conteúdo completo[\s\S]{0,300}abrirConteudoAgenda|abrirConteudoAgenda[\s\S]{0,300}Abrir conteúdo completo/);
+  assert.match(html, /post-pill:hover,\.post-pill:focus-visible/);
 });

@@ -1554,7 +1554,10 @@
   window.renderCompanyCalendar = renderCompanyCalendar;
 
   function companyCalendarEventButton(event) {
-    return '<button class="company-calendar-event ' + (event.entityType === 'post' ? 'post-event' : 'task-event') + '" onclick="openCompanyCalendarEvent(\'' + esc(event.id) + '\',\'' + esc(event.entityType) + '\')"><span>' + (event.time ? esc(event.time) + ' · ' : '') + esc(event.title) + '</span><small>' + esc(event.type + ' · ' + event.status) + '</small></button>';
+    var action = event.entityType === 'post'
+      ? "abrirConteudoAgenda('" + esc(event.companyId) + "','" + esc(event.id) + "')"
+      : "openCompanyCalendarEvent('" + esc(event.id) + "','" + esc(event.entityType) + "')";
+    return '<button type="button" class="company-calendar-event ' + (event.entityType === 'post' ? 'post-event' : 'task-event') + '" onclick="' + action + '" aria-label="Abrir ' + esc(event.title) + '"><span>' + (event.time ? esc(event.time) + ' · ' : '') + esc(event.title) + '</span><small>' + esc(event.type + ' · ' + event.status) + '</small></button>';
   }
 
   function moveCompanyCalendar(step) { state.companyCalendarCursor = new Date(state.companyCalendarCursor.getFullYear(), state.companyCalendarCursor.getMonth() + step, 1); renderCompanyCalendar(); }
@@ -1565,8 +1568,7 @@
   function openCompanyCalendarEvent(id, entityType) {
     var event = state.companyCalendarEvents.find(function (item) { return item.id === id && item.entityType === entityType; }); if (!event) return;
     if (entityType === 'post') {
-      var client = state.session && state.session.actor && state.session.actor.role === 'empresa_cliente';
-      showModal(modalHead(event.title) + '<div class="modal-body"><div class="detail-summary"><span class="tag tag-roxo">Conteúdo programado</span><h3>' + esc(event.title) + '</h3><p>' + esc(event.companyName) + ' · ' + esc(dateBR(event.date)) + (event.time ? ' às ' + esc(event.time) : '') + '</p></div><div class="modal-actions"><button class="btn btn-ghost" onclick="closeManagementModal()">Fechar</button><button class="btn btn-primary" onclick="closeManagementModal();' + (client ? "irPara('c-conteudo')" : "abrirCalendarioEmpresa('" + esc(event.companyId) + "')") + '">Abrir conteúdo completo</button></div></div>', false);
+      showModal(modalHead(event.title) + '<div class="modal-body"><div class="detail-summary"><span class="tag tag-roxo">Conteúdo programado</span><h3>' + esc(event.title) + '</h3><p>' + esc(event.companyName) + ' · ' + esc(dateBR(event.date)) + (event.time ? ' às ' + esc(event.time) : '') + '</p></div><div class="modal-actions"><button class="btn btn-ghost" onclick="closeManagementModal()">Fechar</button><button class="btn btn-primary" onclick="closeManagementModal();abrirConteudoAgenda(\'' + esc(event.companyId) + '\',\'' + esc(event.id) + '\')">Abrir conteúdo completo</button></div></div>', false);
       return;
     }
     var files = event.files || [];
