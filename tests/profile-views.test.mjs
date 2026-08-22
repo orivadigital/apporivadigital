@@ -43,6 +43,8 @@ test("dashboard and report indicators open their operational destination", async
   assert.match(ui, /A receber no mês', '', '', "irPara\('financeiro'\)"/);
   assert.match(ui, /Clientes ativos', '', '', "irPara\('clientes'\)"/);
   assert.match(ui, /Demandas abertas', '', '', "irPara\('tarefas'\)"/);
+  assert.match(ui, /Resumo operacional e comercial com dados persistidos/);
+  assert.doesNotMatch(ui, /Resumo operacional e financeiro com dados persistidos/);
   assert.match(ui, /function reportRanking\(title, rows, action\)/);
 });
 

@@ -1747,7 +1747,7 @@
 
   paginas.relatorios = function () {
     window.setTimeout(loadReports, 0);
-    return '<div class="page-head"><div><h1 class="page-title">Relatórios</h1><p class="page-desc">Resumo operacional e financeiro com dados persistidos</p></div></div>' + loading('reports-real-area', 'Gerando relatório...');
+    return '<div class="page-head"><div><h1 class="page-title">Relatórios</h1><p class="page-desc">Resumo operacional e comercial com dados persistidos</p></div></div>' + loading('reports-real-area', 'Gerando relatório...');
   };
 
   async function loadReports() {
