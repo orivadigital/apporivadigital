@@ -6,11 +6,16 @@ const root = new URL("../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
 
 test("finance opens as a complete panorama with an optional monthly filter", async () => {
-  const [ui, route] = await Promise.all([
+  const [html, ui, route, itemRoute, migration] = await Promise.all([
+    read("public/oriva-plataforma.html"),
     read("public/management.js"),
     read("app/api/finance/route.ts"),
+    read("app/api/finance/[id]/route.ts"),
+    read("supabase/migrations/20260822012455_restrict_finance_to_super_admin.sql"),
   ]);
 
+  assert.match(html, /superAdminPaginas=\['backups','financeiro'\]/);
+  assert.match(html, /superAdminPaginas\.includes\(id\)&&actor\.role!=='super_admin'/);
   assert.match(ui, /loadFinance\(''\)/);
   assert.match(ui, /Panorama financeiro completo/);
   assert.match(ui, /Todos os períodos/);
@@ -18,6 +23,10 @@ test("finance opens as a complete panorama with an optional monthly filter", asy
   assert.match(ui, /Saldo geral/);
   assert.match(route, /else if \(\/\^\\d\{4\}-\\d\{2\}\$\/\.test\(month\)\)/);
   assert.match(route, /financial_entries\?select=\*&order=due_date\.asc/);
+  assert.match(route, /requireSuperAdmin\(request\)/);
+  assert.match(itemRoute, /requireSuperAdmin\(request\)/);
+  assert.match(migration, /drop policy if exists financial_entries_all/);
+  assert.match(migration, /using \(private\.is_super_admin\(\)\)[\s\S]*with check \(private\.is_super_admin\(\)\)/);
 });
 
 test("dashboard and report indicators open their operational destination", async () => {

@@ -536,9 +536,10 @@ const navConfig = {
     {id:'backups',label:'Backup de dados',ico:'backup'},
     {id:'parceiros',label:'Parceiros PJ',ico:'parceiros'},
     {id:'contratos',label:'Contratos',ico:'contratos'},
-    {sec:'Financeiro'},
-    {id:'financeiro',label:'Financeiro',ico:'financeiro'},
-    {id:'relatorios',label:'Relatórios',ico:'relatorios'}
+    {sec:'Análises'},
+    {id:'relatorios',label:'Relatórios',ico:'relatorios'},
+    {sec:'Administração'},
+    {id:'financeiro',label:'Financeiro',ico:'financeiro'}
   ],
   cliente:[
     {sec:'Meu espaço'},
@@ -593,7 +594,7 @@ function sair(){
 
 /* ================= NAVEGAÇÃO ================= */
 const colaboradorPaginasRestritas=['clientes','calendario-empresa','acessos','parceiros','contratos','financeiro','relatorios'];
-const superAdminPaginas=['backups'];
+const superAdminPaginas=['backups','financeiro'];
 function canAccessOrivaPage(id){
   const actor=window.orivaCurrentActor;
   if(!actor)return true;

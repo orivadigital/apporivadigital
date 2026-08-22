@@ -13,7 +13,7 @@ test("backup page is visible only to the superadministrator and all actions are 
   ]);
 
   assert.match(html, /id:'backups',label:'Backup de dados'/);
-  assert.match(html, /const superAdminPaginas=\['backups'\]/);
+  assert.match(html, /const superAdminPaginas=\['backups','financeiro'\]/);
   assert.match(html, /superAdminPaginas\.includes\(id\)&&actor\.role!=='super_admin'/);
   assert.match(management, /paginas\.backups\s*=/);
   assert.match(management, /function loadBackups\(/);

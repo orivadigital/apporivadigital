@@ -14,6 +14,7 @@ test("collaborators see only their own dashboard, demands, agenda and assigned c
   assert.match(html, /actor&&actor\.role==='colaborador'\?\['dashboard','tarefas','agenda','chat'\]/);
   assert.match(html, /visibleNavItems\(navConfig\[perfilAtual\]/);
   assert.match(html, /if\(!canAccessOrivaPage\(id\)\)/);
+  assert.match(html, /superAdminPaginas=\['backups','financeiro'\]/);
   assert.match(management, /window\.canAccessOrivaPage\('financeiro'\)/);
   assert.match(management, /Tarefas e conteúdos atribuídos a você como responsável ou Parceiro PJ/);
   assert.match(management, /Apenas os sócios podem criar novas demandas/);
@@ -24,20 +25,28 @@ test("collaborators see only their own dashboard, demands, agenda and assigned c
   assert.match(management, /Esta área é restrita ao administrador principal e aos sócios/);
 });
 
-test("contracts and finance APIs reject collaborators before querying data", async () => {
+test("contracts remain with agency administrators while finance is exclusive to the super administrator", async () => {
   const dataLayer = await read("lib/oriva-data.ts");
-  const routes = await Promise.all([
+  const contractRoutes = await Promise.all([
     read("app/api/contracts/route.ts"),
     read("app/api/contracts/[id]/route.ts"),
+  ]);
+  const financeRoutes = await Promise.all([
     read("app/api/finance/route.ts"),
     read("app/api/finance/[id]/route.ts"),
   ]);
 
   assert.match(dataLayer, /export async function requireAgencyAdministrator/);
   assert.match(dataLayer, /actor\.role !== "super_admin" && actor\.role !== "socio"/);
-  for (const route of routes) {
+  assert.match(dataLayer, /export async function requireSuperAdmin/);
+  assert.match(dataLayer, /actor\.role !== "super_admin"/);
+  for (const route of contractRoutes) {
     assert.match(route, /requireAgencyAdministrator\(request\)/);
     assert.doesNotMatch(route, /requireAgency\(request\)/);
+  }
+  for (const route of financeRoutes) {
+    assert.match(route, /requireSuperAdmin\(request\)/);
+    assert.doesNotMatch(route, /requireAgencyAdministrator\(request\)/);
   }
 });
 
@@ -45,8 +54,9 @@ test("database policies still require the sensitive agency permission", async ()
   const schema = await read("supabase/schema.sql");
   const scopeMigration = await read("supabase/migrations/20260810013000_assigned_work_editing.sql");
   const adminTaskFix = await read("supabase/migrations/20260814003000_fix_agency_task_admin_returning.sql");
+  const financeRestriction = await read("supabase/migrations/20260822012455_restrict_finance_to_super_admin.sql");
   assert.match(schema, /create policy contracts_all[\s\S]*private\.can_manage_agency\(\)/);
-  assert.match(schema, /create policy financial_entries_all[\s\S]*private\.can_manage_agency\(\)/);
+  assert.match(financeRestriction, /create policy financial_entries_all[\s\S]*private\.is_super_admin\(\)/);
   assert.match(schema, /create policy agency_tasks_select[\s\S]*private\.can_manage_agency\(\) or private\.can_view_task\(id\)/);
   assert.match(adminTaskFix, /create policy agency_tasks_select[\s\S]*private\.can_manage_agency\(\)[\s\S]*private\.can_view_task\(id\)/);
   assert.match(scopeMigration, /p\.role = 'colaborador' and t\.assigned_to = p\.id/);
