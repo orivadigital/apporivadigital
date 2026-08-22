@@ -9,7 +9,10 @@
     selectedId: '',
     filter: 'todos',
     polling: null,
-    loadingThread: false
+    refreshPromise: null,
+    threadRequestId: 0,
+    drafts: Object.create(null),
+    sending: Object.create(null)
   };
 
   var esc = window.orivaEscape;
@@ -91,8 +94,16 @@
       if (chatState.selectedId && !chatState.conversations.some(function (item) { return item.id === chatState.selectedId; })) {
         chatState.selectedId = '';
       }
-      renderChat();
-      if (chatState.selectedId) await loadChatThread(chatState.selectedId, true);
+      var canKeepOpenThread = Boolean(
+        silent && chatState.selectedId && document.getElementById('chat-thread-panel')
+      );
+      if (canKeepOpenThread) {
+        renderChatList();
+        await loadChatThread(chatState.selectedId, true);
+      } else {
+        renderChat();
+        if (chatState.selectedId) await loadChatThread(chatState.selectedId, true);
+      }
       startChatPolling();
     } catch (error) {
       if (!silent) area.innerHTML = '<div class="card management-empty"><h3>Não foi possível carregar o bate-papo</h3><p>' + esc(error.message) + '</p><button class="btn btn-primary" type="button" onclick="loadChat()">Tentar novamente</button></div>';
@@ -138,15 +149,29 @@
       '</button>';
   }
 
+  function conversationListHtml() {
+    var list = filteredConversations();
+    return list.length
+      ? list.map(conversationCard).join('')
+      : '<div class="chat-list-empty"><div>💬</div><strong>Nenhuma conversa neste filtro</strong><span>Inicie uma conversa para centralizar a comunicação.</span><button class="btn btn-primary" type="button" onclick="openChatForm()">Iniciar conversa</button></div>';
+  }
+
+  function renderChatList() {
+    var listPanel = document.querySelector('#chat-area .chat-list-panel');
+    var layout = document.querySelector('#chat-area .chat-layout');
+    if (!listPanel || !layout) {
+      renderChat();
+      return;
+    }
+    listPanel.innerHTML = conversationListHtml();
+    layout.classList.toggle('mobile-thread-open', Boolean(chatState.selectedId));
+  }
+
   function renderChat() {
     var area = document.getElementById('chat-area');
     if (!area) return;
-    var list = filteredConversations();
-    var listHtml = list.length
-      ? list.map(conversationCard).join('')
-      : '<div class="chat-list-empty"><div>💬</div><strong>Nenhuma conversa neste filtro</strong><span>Inicie uma conversa para centralizar a comunicação.</span><button class="btn btn-primary" type="button" onclick="openChatForm()">Iniciar conversa</button></div>';
     area.innerHTML = filterButtons() + '<div class="chat-layout' + (chatState.selectedId ? ' mobile-thread-open' : '') + '">' +
-      '<aside class="chat-list-panel" aria-label="Lista de conversas">' + listHtml + '</aside>' +
+      '<aside class="chat-list-panel" aria-label="Lista de conversas">' + conversationListHtml() + '</aside>' +
       '<section class="chat-thread-panel" id="chat-thread-panel">' +
       '<div class="chat-thread-empty"><div class="chat-empty-icon">' + ico.chat + '</div><h3>Selecione uma conversa</h3><p>As mensagens ficam salvas e disponíveis somente para os participantes autorizados.</p></div>' +
       '</section></div>';
@@ -165,14 +190,14 @@
   }
 
   async function loadChatThread(id, silent) {
-    if (chatState.loadingThread || chatState.selectedId !== id) return;
+    if (chatState.selectedId !== id) return;
     var panel = document.getElementById('chat-thread-panel');
     if (!panel) return;
-    chatState.loadingThread = true;
+    var requestId = ++chatState.threadRequestId;
     if (!silent) panel.innerHTML = '<div class="loading-state"><div class="spinner"></div>Carregando mensagens...</div>';
     try {
       var payload = await api('/api/chat/' + encodeURIComponent(id));
-      if (chatState.selectedId !== id) return;
+      if (chatState.selectedId !== id || requestId !== chatState.threadRequestId) return;
       renderChatThread(payload.conversation, payload.messages || []);
       api('/api/chat/' + encodeURIComponent(id), {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'read' })
@@ -182,15 +207,24 @@
       var card = document.querySelector('[data-chat-id="' + id + '"] .chat-unread');
       if (card) card.remove();
     } catch (error) {
+      if (chatState.selectedId !== id || requestId !== chatState.threadRequestId) return;
       panel.innerHTML = '<div class="chat-thread-empty"><h3>Não foi possível abrir a conversa</h3><p>' + esc(error.message) + '</p><button class="btn btn-primary" type="button" onclick="openChatConversation(\'' + esc(id) + '\')">Tentar novamente</button></div>';
-    } finally {
-      chatState.loadingThread = false;
     }
   }
 
   function renderChatThread(conversation, messages) {
     var panel = document.getElementById('chat-thread-panel');
     if (!panel) return;
+    var currentComposer = panel.querySelector('.chat-composer[data-chat-id="' + conversation.id + '"] textarea');
+    var currentMessages = panel.querySelector('#chat-messages');
+    var restoreFocus = Boolean(currentComposer && document.activeElement === currentComposer);
+    var selectionStart = currentComposer && currentComposer.selectionStart;
+    var selectionEnd = currentComposer && currentComposer.selectionEnd;
+    var previousScrollTop = currentMessages ? currentMessages.scrollTop : 0;
+    var wasNearBottom = !currentMessages || currentMessages.scrollHeight - currentMessages.scrollTop - currentMessages.clientHeight < 80;
+    if (currentComposer) chatState.drafts[conversation.id] = currentComposer.value;
+    var draft = chatState.drafts[conversation.id] || '';
+    var sending = Boolean(chatState.sending[conversation.id]);
     var summary = chatState.conversations.find(function (item) { return item.id === conversation.id; }) || {};
     var archived = conversation.status === 'arquivada';
     var members = conversation.members || summary.members || [];
@@ -215,32 +249,54 @@
       }).join('') : '<div class="chat-thread-empty"><p>Ainda não há mensagens nesta conversa.</p></div>') + '</div>' +
       (archived
         ? '<div class="chat-archived-note">Esta conversa está arquivada. ' + (agencyRole() ? 'Reabra para enviar novas mensagens.' : 'A equipe pode reabri-la quando necessário.') + '</div>'
-        : '<form class="chat-composer" onsubmit="sendChatMessage(event,\'' + esc(conversation.id) + '\')"><textarea name="message" rows="2" maxlength="5000" required placeholder="Escreva sua mensagem..."></textarea><button class="btn btn-primary" type="submit">Enviar</button></form>');
+        : '<form class="chat-composer" data-chat-id="' + esc(conversation.id) + '" onsubmit="sendChatMessage(event,\'' + esc(conversation.id) + '\')"><textarea name="message" rows="2" maxlength="5000" required placeholder="Escreva sua mensagem..." oninput="saveChatDraft(\'' + esc(conversation.id) + '\',this.value)">' + esc(draft) + '</textarea><button class="btn btn-primary" type="submit"' + (sending ? ' disabled' : '') + '>' + (sending ? 'Enviando...' : 'Enviar') + '</button></form>');
     var messagesRoot = document.getElementById('chat-messages');
-    if (messagesRoot) messagesRoot.scrollTop = messagesRoot.scrollHeight;
+    if (messagesRoot) {
+      messagesRoot.scrollTop = wasNearBottom ? messagesRoot.scrollHeight : previousScrollTop;
+    }
+    var restoredComposer = panel.querySelector('.chat-composer[data-chat-id="' + conversation.id + '"] textarea');
+    if (restoreFocus && restoredComposer) {
+      restoredComposer.focus();
+      if (typeof selectionStart === 'number' && typeof selectionEnd === 'number') {
+        restoredComposer.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
+  }
+
+  function saveChatDraft(id, value) {
+    chatState.drafts[id] = String(value == null ? '' : value);
   }
 
   async function sendChatMessage(event, id) {
     event.preventDefault();
+    if (chatState.sending[id]) return;
     var form = event.currentTarget;
     var textarea = form.elements.message;
     var button = form.querySelector('button[type="submit"]');
     var message = textarea.value.trim();
     if (!message) return;
+    chatState.drafts[id] = textarea.value;
+    chatState.sending[id] = true;
     button.disabled = true;
     button.textContent = 'Enviando...';
     try {
       await api('/api/chat/' + encodeURIComponent(id) + '/messages', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: message })
       });
+      delete chatState.drafts[id];
       textarea.value = '';
       await refreshChat(true);
       textarea = document.querySelector('.chat-composer textarea');
       if (textarea) textarea.focus();
     } catch (error) {
       toast(error.message, true);
-      button.disabled = false;
-      button.textContent = 'Enviar';
+    } finally {
+      chatState.sending[id] = false;
+      var currentButton = document.querySelector('.chat-composer[data-chat-id="' + id + '"] button[type="submit"]');
+      if (currentButton) {
+        currentButton.disabled = false;
+        currentButton.textContent = 'Enviar';
+      }
     }
   }
 
@@ -341,17 +397,17 @@
   }
 
   async function refreshChat(keepThread) {
-    var selected = chatState.selectedId;
-    await loadChat(true);
-    if (keepThread && selected && chatState.conversations.some(function (item) { return item.id === selected; })) {
-      chatState.selectedId = selected;
-      renderChat();
-      await loadChatThread(selected, true);
+    if (chatState.refreshPromise) return chatState.refreshPromise;
+    chatState.refreshPromise = loadChat(true, keepThread);
+    try {
+      await chatState.refreshPromise;
+    } finally {
+      chatState.refreshPromise = null;
     }
   }
 
   function startChatPolling() {
-    stopChatPolling();
+    if (chatState.polling) return;
     chatState.polling = window.setInterval(function () {
       if (document.getElementById('chat-area') && !document.hidden) refreshChat(true);
     }, 10000);
@@ -367,6 +423,7 @@
   window.openChatConversation = openChatConversation;
   window.closeChatThread = closeChatThread;
   window.sendChatMessage = sendChatMessage;
+  window.saveChatDraft = saveChatDraft;
   window.toggleChatArchive = toggleChatArchive;
   window.openChatForm = openChatForm;
   window.saveChatConversation = saveChatConversation;

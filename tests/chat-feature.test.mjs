@@ -25,6 +25,22 @@ test("chat is available to agency, client, collaborator and partner views", asyn
   assert.doesNotMatch(chat, /localStorage\s*\./);
 });
 
+test("chat polling preserves drafts and ignores overlapping refreshes", async () => {
+  const chat = await read("public/chat.js");
+  assert.match(chat, /drafts:\s*Object\.create\(null\)/);
+  assert.match(chat, /refreshPromise:\s*null/);
+  assert.match(chat, /threadRequestId:\s*0/);
+  assert.match(chat, /if \(chatState\.refreshPromise\) return chatState\.refreshPromise/);
+  assert.match(chat, /requestId !== chatState\.threadRequestId/);
+  assert.match(chat, /data-chat-id=/);
+  assert.match(chat, /oninput="saveChatDraft/);
+  assert.match(chat, /chatState\.drafts\[conversation\.id\]/);
+  assert.match(chat, /restoreFocus/);
+  assert.match(chat, /wasNearBottom/);
+  assert.doesNotMatch(chat, /if \(chatState\.loadingThread/);
+  assert.doesNotMatch(chat, /var selected = chatState\.selectedId;\s*await loadChat\(true\);[\s\S]*renderChat\(\);\s*await loadChatThread/);
+});
+
 test("chat APIs persist messages under the authenticated profile", async () => {
   const [listRoute, detailRoute, messagesRoute] = await Promise.all([
     read("app/api/chat/route.ts"),
