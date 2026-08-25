@@ -19,6 +19,7 @@ export async function GET(request: Request) {
       fileSize: file.file_size,
       sortOrder: file.order_index,
       uploadedBy: file.uploaded_by ?? "",
+      fileScope: file.file_scope ?? "internal_draft",
       previewUrl: `/api/files?id=${encodeURIComponent(String(file.id))}`,
       downloadUrl: `/api/files?id=${encodeURIComponent(String(file.id))}&download=1`,
       createdAt: file.created_at,
@@ -35,7 +36,10 @@ export async function POST(request: Request) {
     const body = isJson ? await request.json() as Record<string, unknown> : null;
     const form = isJson ? null : await request.formData();
     const postId = String(body?.postId ?? form?.get("post_id") ?? "").trim();
+    const requestedScope = String(body?.fileScope ?? form?.get("file_scope") ?? "internal_draft").trim();
+    const fileScope = requestedScope === "internal_reference" ? "internal_reference" : requestedScope === "internal_draft" ? "internal_draft" : "";
     if (!postId) return Response.json({ error: "Conteúdo não informado." }, { status: 400 });
+    if (!fileScope) return Response.json({ error: "Escolha se o arquivo é uma referência interna ou uma arte em rascunho." }, { status: 400 });
     const posts = await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?id=eq.${encodeURIComponent(postId)}&select=id,company_id,assigned_to,partner_id&limit=1`);
     const post = posts[0];
     if (!post?.company_id) return Response.json({ error: "Conteúdo não encontrado ou não atribuído ao seu perfil." }, { status: 404 });
@@ -79,6 +83,7 @@ export async function POST(request: Request) {
         mime_type: file.type || "application/octet-stream",
         order_index: orderIndex,
         uploaded_by: actor.id,
+        file_scope: fileScope,
       });
     }
 
@@ -92,8 +97,9 @@ export async function POST(request: Request) {
       const mimeType = String(raw.mimeType ?? raw.fileType ?? "").trim().toLowerCase();
       const fileSize = Number(raw.fileSize ?? 0);
       const orderIndex = Number(raw.orderIndex ?? startOrder + index);
+      const rawScope = String(raw.fileScope ?? fileScope).trim();
       const prefix = `companies/${post.company_id}/posts/${postId}/original/`;
-      if (!path.startsWith(prefix) || path.includes("..") || !fileName || !Number.isFinite(fileSize) || fileSize < 1 || !Number.isInteger(orderIndex) || orderIndex < 0) {
+      if (!path.startsWith(prefix) || path.includes("..") || !fileName || !Number.isFinite(fileSize) || fileSize < 1 || !Number.isInteger(orderIndex) || orderIndex < 0 || !["internal_reference", "internal_draft"].includes(rawScope)) {
         throw new Error("Um ou mais arquivos enviados são inválidos.");
       }
       uploaded.push(path);
@@ -105,6 +111,7 @@ export async function POST(request: Request) {
         file_size: fileSize,
         mime_type: mimeType,
         order_index: orderIndex,
+        file_scope: rawScope,
       });
     }
 
@@ -124,10 +131,13 @@ export async function DELETE(request: Request) {
     const actor = await getActor(request);
     const id = new URL(request.url).searchParams.get("id") ?? "";
     if (!id) return Response.json({ error: "Arquivo não informado." }, { status: 400 });
-    const rows = await restRequest<Array<Record<string, unknown>>>(request, `post_files?id=eq.${encodeURIComponent(id)}&select=id,post_id,file_url,uploaded_by&limit=1`);
+    const rows = await restRequest<Array<Record<string, unknown>>>(request, `post_files?id=eq.${encodeURIComponent(id)}&select=id,post_id,file_url,uploaded_by,file_scope&limit=1`);
     const file = rows[0];
     if (!file) return Response.json({ error: "Arquivo não encontrado." }, { status: 404 });
     const administrator = actor.role === "super_admin" || actor.role === "socio";
+    if (file.file_scope === "client_current" || file.file_scope === "client_archived") {
+      return Response.json({ error: "Uma arte já liberada não pode ser excluída. Envie uma nova versão para substituí-la com segurança." }, { status: 409 });
+    }
     if (!administrator && String(file.uploaded_by ?? "") !== actor.id) {
       return Response.json({ error: "Você só pode excluir arquivos enviados pelo seu próprio perfil." }, { status: 403 });
     }

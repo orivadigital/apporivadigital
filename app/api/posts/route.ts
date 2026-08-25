@@ -20,7 +20,20 @@ export const dynamic = "force-dynamic";
 
 function isUuid(value: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 
-function mapPost(row: Record<string, unknown>, files: Array<Record<string, unknown>>, comments: Array<Record<string, unknown>>, isAgency: boolean, canSeeAssignments: boolean) {
+function mapPost(
+  row: Record<string, unknown>,
+  details: Record<string, unknown> | undefined,
+  files: Array<Record<string, unknown>>,
+  comments: Array<Record<string, unknown>>,
+  isClient: boolean,
+  canManage: boolean,
+  canSeeAssignments: boolean,
+) {
+  const released = Boolean(row.client_released_at);
+  const internalAccess = !isClient && Boolean(details);
+  const visibleFiles = isClient
+    ? files.filter((file) => file.file_scope === "client_current" && released)
+    : files;
   const post: Record<string, unknown> = {
     id: row.id,
     tenantId: row.company_id,
@@ -29,25 +42,30 @@ function mapPost(row: Record<string, unknown>, files: Array<Record<string, unkno
     socialNetwork: networkToUi(row.social_network),
     scheduledDate: row.scheduled_date,
     scheduledTime: String(row.scheduled_time ?? "").slice(0, 5),
-    caption: row.caption ?? "",
-    clientNotes: row.client_notes ?? "",
-    status: postStatusToUi(row.status),
-    clientFeedback: row.client_feedback ?? "",
+    caption: isClient ? (released ? row.caption ?? "" : "") : details?.working_caption ?? row.caption ?? "",
+    clientNotes: isClient ? (released ? row.client_notes ?? "" : "") : details?.working_client_notes ?? row.client_notes ?? "",
+    status: isClient && !released ? "Em produção" : postStatusToUi(row.status),
+    clientFeedback: released ? row.client_feedback ?? "" : "",
+    isClientReleased: released,
+    clientReleasedAt: row.client_released_at ?? "",
+    internalValidated: internalAccess && Boolean(details?.validated_at),
+    internalValidatedAt: internalAccess ? details?.validated_at ?? "" : "",
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    files: files.map((file) => ({
+    files: visibleFiles.map((file) => ({
       id: file.id,
       fileName: file.file_name,
       fileType: file.mime_type,
       fileSize: file.file_size,
       sortOrder: file.order_index,
       uploadedBy: file.uploaded_by ?? "",
+      fileScope: file.file_scope ?? "internal_draft",
       r2Key: file.file_url,
       previewUrl: `/api/files?id=${encodeURIComponent(String(file.id))}`,
       downloadUrl: `/api/files?id=${encodeURIComponent(String(file.id))}&download=1`,
     })),
-    comments: comments.map((comment) => {
+    comments: (isClient && !released ? [] : comments).map((comment) => {
       const profile = comment.profiles && typeof comment.profiles === "object" ? comment.profiles as Record<string, unknown> : null;
       return { id: comment.id, comment: comment.comment, commentType: comment.comment_type, author: profile?.name ?? "Usuário", createdAt: comment.created_at };
     }),
@@ -57,7 +75,13 @@ function mapPost(row: Record<string, unknown>, files: Array<Record<string, unkno
     post.assignedTo = row.assigned_to ?? "";
     post.partnerId = row.partner_id ?? "";
   }
-  if (isAgency) post.internalNotes = row.internal_notes ?? "";
+  if (internalAccess) {
+    post.internalReferences = details?.internal_references ?? "";
+    post.internalNotes = details?.internal_notes ?? "";
+    post.clientCaption = row.caption ?? "";
+    post.clientNotesReleased = row.client_notes ?? "";
+  }
+  if (canManage) post.canReleaseToClient = true;
   return post;
 }
 
@@ -89,6 +113,7 @@ export async function GET(request: Request) {
     const requestedCompanyId = String(url.searchParams.get("tenant_id") ?? "").trim();
     const isAgency = actor.role === "super_admin" || actor.role === "socio";
     const isAssignedUser = actor.role === "colaborador" || actor.role === "parceiro";
+    const isClient = actor.role === "empresa_cliente";
     let companyId = requestedCompanyId;
     if (actor.role === "empresa_cliente") {
       if (!actor.companyId) return Response.json({ error: "Nenhuma empresa está vinculada ao seu login." }, { status: 403 });
@@ -114,7 +139,9 @@ export async function GET(request: Request) {
       if (!actor.partnerId) return Response.json({ error: "Seu perfil ainda não está vinculado a um parceiro." }, { status: 403 });
       params.set("partner_id", `eq.${actor.partnerId}`);
     }
-    const status = url.searchParams.get("status"); if (status) params.set("status", `eq.${postStatusToDb(status)}`);
+    const status = url.searchParams.get("status");
+    if (status === "Em produção") params.set("client_released_at", "is.null");
+    else if (status) params.set("status", `eq.${postStatusToDb(status)}`);
     const contentType = url.searchParams.get("content_type"); if (contentType) params.set("content_type", `eq.${contentTypeToDb(contentType)}`);
     const network = url.searchParams.get("social_network"); if (network) params.set("social_network", `eq.${networkToDb(network)}`);
     const from = url.searchParams.get("from"); if (from) params.set("scheduled_date", `gte.${from}`);
@@ -123,18 +150,31 @@ export async function GET(request: Request) {
     const ids = rows.map((row) => String(row.id));
     const fileRows = ids.length ? await restRequest<Array<Record<string, unknown>>>(request, `post_files?post_id=in.(${ids.join(",")})&select=*&order=order_index.asc`) : [];
     const commentRows = ids.length ? await restRequest<Array<Record<string, unknown>>>(request, `post_comments?post_id=in.(${ids.join(",")})&select=id,post_id,profile_id,comment,comment_type,created_at,profiles(name)&order=created_at.asc`) : [];
+    const detailRows = !isClient && ids.length
+      ? await restRequest<Array<Record<string, unknown>>>(request, `post_internal_details?post_id=in.(${ids.join(",")})&select=*&order=created_at.asc`)
+      : [];
     const filesByPost = new Map<string, Array<Record<string, unknown>>>();
     for (const file of fileRows) { const key = String(file.post_id); const current = filesByPost.get(key) ?? []; current.push(file); filesByPost.set(key, current); }
     const commentsByPost = new Map<string, Array<Record<string, unknown>>>();
     for (const comment of commentRows) { const key = String(comment.post_id); const current = commentsByPost.get(key) ?? []; current.push(comment); commentsByPost.set(key, current); }
+    const detailsByPost = new Map(detailRows.map((details) => [String(details.post_id), details]));
     return Response.json({
-      posts: rows.map((row) => mapPost(row, filesByPost.get(String(row.id)) ?? [], commentsByPost.get(String(row.id)) ?? [], isAgency, isAgency || isAssignedUser)),
+      posts: rows.map((row) => mapPost(
+        row,
+        detailsByPost.get(String(row.id)),
+        filesByPost.get(String(row.id)) ?? [],
+        commentsByPost.get(String(row.id)) ?? [],
+        isClient,
+        isAgency,
+        isAgency || isAssignedUser,
+      )),
       tenantId: companyId,
       permissions: {
         canManage: isAgency,
         canReview: actor.role === "empresa_cliente",
         canEditAssigned: isAssignedUser,
         canAttach: isAgency || isAssignedUser,
+        canValidateRelease: isAgency,
         restricted: isAssignedUser,
       },
     });
@@ -159,7 +199,7 @@ export async function POST(request: Request) {
     const title = String(body?.title ?? form?.get("title") ?? "").trim();
     const contentType = contentTypeToDb(body?.contentType ?? form?.get("content_type"));
     const network = networkToDb(body?.socialNetwork ?? form?.get("social_network"));
-    const status = postStatusToDb(body?.status ?? form?.get("status") ?? "Rascunho");
+    const status = "rascunho";
     const jsonSchedules = Array.isArray(body?.schedules) ? body.schedules as Array<Record<string, unknown>> : [];
     const scheduledDates = isJson
       ? jsonSchedules.map((item) => String(item.date ?? "").trim())
@@ -182,8 +222,10 @@ export async function POST(request: Request) {
       content_type: contentType,
       social_network: network,
       scheduled_time: scheduledTime,
+      working_caption: defaultCaption,
+      working_client_notes: String(body?.clientNotes ?? form?.get("client_notes") ?? "").trim(),
+      internal_references: String(body?.internalReferences ?? form?.get("internal_references") ?? "").trim(),
       internal_notes: String(body?.internalNotes ?? form?.get("internal_notes") ?? "").trim(),
-      client_notes: String(body?.clientNotes ?? form?.get("client_notes") ?? "").trim(),
       status,
       assigned_to: assigned || null,
       partner_id: partnerId || null,
@@ -192,7 +234,7 @@ export async function POST(request: Request) {
       ...basePost,
       title: scheduleDescriptions[index] || title,
       scheduled_date: scheduledDate,
-      caption: scheduleDescriptions[index] || defaultCaption,
+      working_caption: scheduleDescriptions[index] || defaultCaption,
     }));
 
     const files = form
@@ -206,7 +248,7 @@ export async function POST(request: Request) {
       const path = `companies/${access.companyId}/posts/bulk-${batchId}/original/${String(index).padStart(2, "0")}-${crypto.randomUUID()}-${safeFileName(file.name)}`;
       await storageRequest(request, path, { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream", "x-upsert": "false" }, body: await file.arrayBuffer() });
       uploadedPaths.push(path);
-      sharedFiles.push({ company_id: access.companyId, file_url: path, original_file_url: path, file_name: file.name, file_type: file.type || "application/octet-stream", file_size: file.size, mime_type: file.type || "application/octet-stream", order_index: index, uploaded_by: access.actor.id });
+      sharedFiles.push({ company_id: access.companyId, file_url: path, original_file_url: path, file_name: file.name, file_type: file.type || "application/octet-stream", file_size: file.size, mime_type: file.type || "application/octet-stream", order_index: index, uploaded_by: access.actor.id, file_scope: "internal_draft" });
     }
 
     if (isJson) {
@@ -234,6 +276,7 @@ export async function POST(request: Request) {
           file_size: fileSize,
           mime_type: mimeType,
           order_index: orderIndex,
+          file_scope: raw.fileScope === "internal_reference" ? "internal_reference" : "internal_draft",
         });
       }
     }

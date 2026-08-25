@@ -82,6 +82,8 @@ create table public.scheduled_posts (
   approved_by uuid references public.profiles(id) on delete set null,
   approved_at timestamptz,
   client_feedback text not null default '',
+  client_released_at timestamptz,
+  client_released_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -89,6 +91,21 @@ create table public.scheduled_posts (
 create index scheduled_posts_company_date_idx on public.scheduled_posts (company_id, scheduled_date, scheduled_time);
 create index scheduled_posts_company_status_date_idx on public.scheduled_posts (company_id, status, scheduled_date);
 create index scheduled_posts_assigned_idx on public.scheduled_posts (assigned_to, scheduled_date) where assigned_to is not null;
+
+create table public.post_internal_details (
+  post_id uuid primary key references public.scheduled_posts(id) on delete cascade,
+  company_id uuid not null references public.companies(id) on delete cascade,
+  working_caption text not null default '',
+  working_client_notes text not null default '',
+  internal_references text not null default '',
+  internal_notes text not null default '',
+  validated_at timestamptz,
+  validated_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index post_internal_details_company_idx on public.post_internal_details (company_id, post_id);
 
 create table public.post_files (
   id uuid primary key default gen_random_uuid(),
@@ -102,6 +119,7 @@ create table public.post_files (
   mime_type text not null,
   order_index integer not null default 0 check (order_index >= 0),
   uploaded_by uuid references public.profiles(id) on delete set null,
+  file_scope text not null default 'internal_draft' check (file_scope in ('internal_reference', 'internal_draft', 'client_current', 'client_archived')),
   created_at timestamptz not null default now()
 );
 

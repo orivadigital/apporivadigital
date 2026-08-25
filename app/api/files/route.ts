@@ -8,7 +8,11 @@ export async function GET(request: Request) {
     if (!id) return Response.json({ error: "Arquivo não informado." }, { status: 400 });
     const entity = url.searchParams.get("entity") ?? "post";
     const table = entity === "task" ? "task_files" : entity === "contract" ? "contract_files" : "post_files";
-    const rows = await restRequest<Array<Record<string, unknown>>>(request, `${table}?id=eq.${encodeURIComponent(id)}&select=file_url,file_name,mime_type,file_size&limit=1`);
+    const select = table === "post_files" ? "file_url,file_name,mime_type,file_size,file_scope" : "file_url,file_name,mime_type,file_size";
+    const path = table === "post_files"
+      ? `post_files?id=eq.${encodeURIComponent(id)}&select=${select}&limit=1`
+      : `${table}?id=eq.${encodeURIComponent(id)}&select=${select}&limit=1`;
+    const rows = await restRequest<Array<Record<string, unknown>>>(request, path);
     const file = rows[0]; if (!file) return Response.json({ error: "Arquivo não encontrado." }, { status: 404 });
     const object = await storageRequest(request, String(file.file_url), { method: "GET" });
     const disposition = url.searchParams.get("download") ? `attachment; filename*=UTF-8''${encodeURIComponent(String(file.file_name))}` : `inline; filename*=UTF-8''${encodeURIComponent(String(file.file_name))}`;

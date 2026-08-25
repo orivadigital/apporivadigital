@@ -67,9 +67,10 @@ Deno.serve(async (req: Request) => {
     const memberships = await select(`company_users?profile_id=eq.${encodeURIComponent(clean(profile.id))}&select=company_id&limit=1`);
     const companyId = clean(memberships[0]?.company_id);
     if (!companyId) return json({ error: "Nenhuma empresa está vinculada ao seu login." }, 403);
-    const posts = await select(`scheduled_posts?id=eq.${encodeURIComponent(postId)}&company_id=eq.${encodeURIComponent(companyId)}&select=id,company_id,status&limit=1`);
+    const posts = await select(`scheduled_posts?id=eq.${encodeURIComponent(postId)}&company_id=eq.${encodeURIComponent(companyId)}&select=id,company_id,status,client_released_at&limit=1`);
     const post = posts[0];
-    if (!post || post.status === "rascunho") return json({ error: "Conteúdo não encontrado para esta empresa." }, 404);
+    if (!post) return json({ error: "Conteúdo não encontrado para esta empresa." }, 404);
+    if (!post.client_released_at) return json({ error: "Este conteúdo ainda não foi liberado para aprovação do cliente." }, 403);
 
     let newStatus = clean(post.status);
     let commentType = "comentario";

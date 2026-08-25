@@ -24,6 +24,7 @@ const BACKUP_TABLES: BackupTable[] = [
   { name: "companies", order: "id" },
   { name: "company_users", order: "id" },
   { name: "scheduled_posts", order: "id" },
+  { name: "post_internal_details", order: "post_id" },
   { name: "post_files", order: "id" },
   { name: "post_comments", order: "id" },
   { name: "agency_tasks", order: "id" },

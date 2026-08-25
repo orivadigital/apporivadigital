@@ -92,6 +92,7 @@ declare
     'partners',
     'company_users',
     'scheduled_posts',
+    'post_internal_details',
     'agency_tasks',
     'contracts',
     'financial_entries',

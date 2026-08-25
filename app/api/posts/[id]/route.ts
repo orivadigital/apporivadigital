@@ -20,13 +20,29 @@ export async function PATCH(request: Request, context: Context) {
     const isAgency = actor.role === "super_admin" || actor.role === "socio";
     const isAssignedUser = actor.role === "colaborador" || actor.role === "parceiro";
     if (!isAgency && !isAssignedUser) return Response.json({ error: "Você não pode editar este conteúdo." }, { status: 403 });
-    const rows = await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?id=eq.${encodeURIComponent(id)}&select=id,company_id,assigned_to,partner_id&limit=1`);
+    const rows = await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?id=eq.${encodeURIComponent(id)}&select=id,company_id,assigned_to,partner_id,client_released_at&limit=1`);
     const post = rows[0];
     if (!post) return Response.json({ error: "Conteúdo não encontrado ou não atribuído ao seu perfil." }, { status: 404 });
+
+    const action = String(body.action ?? "").trim();
+    if (action) {
+      if (!isAgency) return Response.json({ error: "Somente os sócios podem validar ou liberar conteúdos." }, { status: 403 });
+      const tenantId = String(body.tenantId ?? post.company_id ?? "").trim();
+      if (tenantId !== String(post.company_id)) return Response.json({ error: "Este conteúdo pertence a outra empresa." }, { status: 403 });
+      const rpc = action === "validate_internal"
+        ? "validate_scheduled_post_internal"
+        : action === "release_to_client"
+          ? "release_scheduled_post_to_client"
+          : "";
+      if (!rpc) return Response.json({ error: "Ação inválida." }, { status: 400 });
+      await restRequest(request, `rpc/${rpc}`, { method: "POST", body: JSON.stringify({ p_post_id: id }) });
+      return Response.json({ updated: true, action });
+    }
 
     const assigned = String(body.assignedTo ?? "").trim();
     const partnerId = String(body.partnerId ?? "").trim();
     const values: Record<string, unknown> = {};
+    const internalValues: Record<string, unknown> = {};
     if (isAgency) {
       const tenantId = String(body.tenantId ?? post.company_id ?? "").trim();
       if (tenantId !== String(post.company_id)) return Response.json({ error: "Este conteúdo pertence a outra empresa." }, { status: 403 });
@@ -43,9 +59,10 @@ export async function PATCH(request: Request, context: Context) {
       }
       if ("scheduledDate" in body) values.scheduled_date = body.scheduledDate;
       if ("scheduledTime" in body) values.scheduled_time = body.scheduledTime;
-      if ("caption" in body) values.caption = String(body.caption ?? "").trim();
-      if ("internalNotes" in body) values.internal_notes = String(body.internalNotes ?? "").trim();
-      if ("clientNotes" in body) values.client_notes = String(body.clientNotes ?? "").trim();
+      if ("caption" in body || "workingCaption" in body) internalValues.working_caption = String(body.workingCaption ?? body.caption ?? "").trim();
+      if ("internalReferences" in body) internalValues.internal_references = String(body.internalReferences ?? "").trim();
+      if ("internalNotes" in body) internalValues.internal_notes = String(body.internalNotes ?? "").trim();
+      if ("clientNotes" in body || "workingClientNotes" in body) internalValues.working_client_notes = String(body.workingClientNotes ?? body.clientNotes ?? "").trim();
       if ("status" in body) {
         const status = postStatusToDb(body.status);
         if (!POST_STATUSES.includes(status)) return Response.json({ error: "Situação do conteúdo inválida." }, { status: 400 });
@@ -72,16 +89,27 @@ export async function PATCH(request: Request, context: Context) {
       const assignedAsPartner = Boolean(actor.partnerId) && String(post.partner_id ?? "") === actor.partnerId;
       const assignedToActor = assignedInternally || assignedAsPartner;
       if (!assignedToActor) return Response.json({ error: "Este conteúdo não está atribuído ao seu perfil." }, { status: 403 });
-      if ("caption" in body || "description" in body) values.caption = String(body.caption ?? body.description ?? "").trim();
+      if ("caption" in body || "workingCaption" in body || "description" in body) internalValues.working_caption = String(body.workingCaption ?? body.caption ?? body.description ?? "").trim();
+      if ("internalReferences" in body) internalValues.internal_references = String(body.internalReferences ?? "").trim();
+      if ("internalNotes" in body) internalValues.internal_notes = String(body.internalNotes ?? "").trim();
+      if ("clientNotes" in body || "workingClientNotes" in body) internalValues.working_client_notes = String(body.workingClientNotes ?? body.clientNotes ?? "").trim();
       if ("status" in body) {
         const status = postStatusToDb(body.status);
         if (!POST_STATUSES.includes(status)) return Response.json({ error: "Situação do conteúdo inválida." }, { status: 400 });
         values.status = status;
       }
     }
-    if (!Object.keys(values).length) return Response.json({ error: "Nenhuma alteração informada." }, { status: 400 });
-    const updated = await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?id=eq.${encodeURIComponent(id)}&company_id=eq.${encodeURIComponent(String(post.company_id))}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(values) });
-    if (!updated[0]) return Response.json({ error: "Não foi possível atualizar este conteúdo." }, { status: 404 });
+    if (!Object.keys(values).length && !Object.keys(internalValues).length) return Response.json({ error: "Nenhuma alteração informada." }, { status: 400 });
+    if (Object.keys(values).length) {
+      const updated = await restRequest<Array<Record<string, unknown>>>(request, `scheduled_posts?id=eq.${encodeURIComponent(id)}&company_id=eq.${encodeURIComponent(String(post.company_id))}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(values) });
+      if (!updated[0]) return Response.json({ error: "Não foi possível atualizar este conteúdo." }, { status: 404 });
+    }
+    if (Object.keys(internalValues).length) {
+      internalValues.validated_at = null;
+      internalValues.validated_by = null;
+      const updatedInternal = await restRequest<Array<Record<string, unknown>>>(request, `post_internal_details?post_id=eq.${encodeURIComponent(id)}&company_id=eq.${encodeURIComponent(String(post.company_id))}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(internalValues) });
+      if (!updatedInternal[0]) return Response.json({ error: "Não foi possível atualizar a área interna deste conteúdo." }, { status: 404 });
+    }
     return Response.json({ updated: true });
   } catch (error) { return jsonError(error); }
 }

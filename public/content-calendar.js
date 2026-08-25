@@ -12,6 +12,7 @@
     restrictedMode: false,
     permissions: { canManage: false, canReview: true, canEditAssigned: false, canAttach: false },
     pendingFiles: [],
+    pendingReferenceFiles: [],
     view: 'month',
     cursor: new Date(),
     filters: { status: '', content_type: '', social_network: '' }
@@ -22,6 +23,7 @@
   var statuses = ['Rascunho', 'Programado', 'Aguardando aprovação', 'Aprovado', 'Revisão solicitada', 'Publicado'];
   var statusColors = {
     'Rascunho': '#8b8b95',
+    'Em produção': '#64748b',
     'Programado': '#2563eb',
     'Aguardando aprovação': '#d97706',
     'Aprovado': '#16a34a',
@@ -116,7 +118,7 @@
     contentState.clientMode = clientMode;
     contentState.restrictedMode = !clientMode && isAssignedContentMode();
     window.setTimeout(initContentCalendar, 0);
-    var visibleStatuses = clientMode ? statuses.filter(function (status) { return status !== 'Rascunho'; }) : statuses;
+    var visibleStatuses = clientMode ? ['Em produção'].concat(statuses.filter(function (status) { return status !== 'Rascunho'; })) : statuses;
     var clientIntro = clientMode ? [
       '<div class="manual-post-banner">',
         '<div style="display:flex;align-items:center;gap:14px"><div class="manual-post-shield">🔒</div><div>',
@@ -294,11 +296,10 @@
       var payload = await apiJson('/api/posts?' + params.toString());
       contentState.posts = payload.posts || [];
       if (contentState.clientMode) {
-        contentState.posts = contentState.posts.filter(function (post) {
-          return post.status !== 'Rascunho';
-        }).map(function (post) {
+        contentState.posts = contentState.posts.map(function (post) {
           var safe = Object.assign({}, post);
           delete safe.internalNotes;
+          delete safe.internalReferences;
           return safe;
         });
       }
@@ -363,8 +364,8 @@
   window.goToday = goToday;
 
   function emptyState() {
-    var title = contentState.clientMode ? 'A agência ainda não liberou conteúdos para você.' : contentState.restrictedMode ? 'Nenhum conteúdo desta empresa foi atribuído a você.' : 'Essa empresa ainda não possui conteúdos programados.';
-    var description = contentState.clientMode ? 'Quando um conteúdo for programado, ele aparecerá aqui automaticamente.' : contentState.restrictedMode ? 'Você verá aqui somente os conteúdos que estiverem sob sua responsabilidade.' : 'Cadastre o planejamento da semana ou do mês para começar.';
+    var title = contentState.clientMode ? 'Nenhum conteúdo programado ainda.' : contentState.restrictedMode ? 'Nenhum conteúdo desta empresa foi atribuído a você.' : 'Essa empresa ainda não possui conteúdos programados.';
+    var description = contentState.clientMode ? 'As demandas programadas aparecerão aqui. A arte e a legenda serão exibidas somente depois da liberação da equipe.' : contentState.restrictedMode ? 'Você verá aqui somente os conteúdos que estiverem sob sua responsabilidade.' : 'Cadastre o planejamento da semana ou do mês para começar.';
     return [
       '<div class="empty-state">',
         '<div class="empty-icon">' + ico.agenda + '</div>',
@@ -418,10 +419,11 @@
 
   function postPill(post) {
     var color = statusColors[post.status] || '#7c3aed';
+    var releaseText = contentState.clientMode ? '' : (post.isClientReleased ? ' · Enviado ao cliente' : ' · Não enviado');
     return '<button' + contentOpenAttributes(post.id, 'Abrir ' + post.title) + ' class="post-pill" title="' + esc(post.scheduledTime + ' · ' + post.title) +
       '" style="border-left-color:' + color + ';background:' + color + '14;color:' + color +
       '"><strong>' + esc(post.title) + '</strong><span>' +
-      esc(post.scheduledTime + ' · ' + post.contentType + ' · ' + post.status) + '</span></button>';
+      esc(post.scheduledTime + ' · ' + post.contentType + ' · ' + post.status + releaseText) + '</span></button>';
   }
 
   function renderMonth() {
@@ -481,7 +483,7 @@
               '"><div class="time">' +
               esc(post.scheduledTime + ' · ' + post.socialNetwork) + '</div><div class="title">' +
               esc(post.title) + '</div><div class="time" style="margin-top:5px;color:' +
-              (statusColors[post.status] || '#7c3aed') + '">' + esc(post.status) + '</div></button>';
+              (statusColors[post.status] || '#7c3aed') + '">' + esc(post.status) + (!contentState.clientMode ? esc(post.isClientReleased ? ' · Enviado ao cliente' : ' · Não enviado') : '') + '</div></button>';
           }).join('') : '<div class="page-desc" style="text-align:center;padding:18px 0">Sem posts</div>',
         '</div>'
       ].join('');
@@ -515,7 +517,8 @@
           '<div><div class="post-list-title">' + esc(post.title) + '</div>',
             '<div class="post-list-meta"><span>' + esc(formatDate(post.scheduledDate)) + ' às ' + esc(post.scheduledTime) + '</span>',
             '<span>' + esc(post.contentType) + '</span><span>' + esc(post.socialNetwork) + '</span></div></div>',
-          '<div class="post-list-actions"><span class="tag" style="background:' + color + '18;color:' + color + '"><span class="status-dot" style="background:' + color + '"></span>' + esc(post.status) + '</span></div>',
+          '<div class="post-list-actions"><span class="tag" style="background:' + color + '18;color:' + color + '"><span class="status-dot" style="background:' + color + '"></span>' + esc(post.status) + '</span>' +
+            (!contentState.clientMode ? '<span class="release-badge ' + (post.isClientReleased ? 'sent' : 'internal') + '">' + (post.isClientReleased ? '✓ Enviado ao cliente' : '🔒 Não enviado') + '</span>' : '') + '</div>',
         '</button>'
       ].join('');
     }).join('');
@@ -583,36 +586,47 @@
   }
   window.removeContentScheduleDate = removeContentScheduleDate;
 
-  function renderPendingContentFiles() {
-    var list = document.getElementById('pending-content-files');
+  function pendingFilesForScope(scope) {
+    return scope === 'internal_reference' ? contentState.pendingReferenceFiles : contentState.pendingFiles;
+  }
+
+  function renderPendingContentFiles(scope) {
+    scope = scope || 'internal_draft';
+    var list = document.getElementById(scope === 'internal_reference' ? 'pending-reference-files' : 'pending-content-files');
     if (!list) return;
-    if (!contentState.pendingFiles.length) {
+    var selected = pendingFilesForScope(scope);
+    if (!selected.length) {
       list.innerHTML = '<div class="management-inline-empty">Nenhum arquivo selecionado.</div>';
       return;
     }
-    list.innerHTML = contentState.pendingFiles.map(function (file, index) {
+    list.innerHTML = selected.map(function (file, index) {
       return '<div class="file-row"><div class="file-main"><b>' + esc(file.name) + '</b><span>' + esc(formatBytes(file.size)) + '</span></div>' +
-        '<button type="button" class="btn-xs" style="color:var(--vermelho)" onclick="removePendingContentFile(' + index + ')">Remover</button></div>';
-    }).join('') + '<button type="button" class="btn btn-ghost clear-files-button" onclick="clearPendingContentFiles()">Limpar todos os arquivos</button>';
+        '<button type="button" class="btn-xs" style="color:var(--vermelho)" onclick="removePendingContentFile(' + index + ',\'' + scope + '\')">Remover</button></div>';
+    }).join('') + '<button type="button" class="btn btn-ghost clear-files-button" onclick="clearPendingContentFiles(\'' + scope + '\')">Limpar todos os arquivos</button>';
   }
 
-  function handleContentFiles(input) {
-    contentState.pendingFiles = Array.prototype.slice.call(input.files || []);
-    renderPendingContentFiles();
+  function handleContentFiles(input, scope) {
+    scope = scope || 'internal_draft';
+    if (scope === 'internal_reference') contentState.pendingReferenceFiles = Array.prototype.slice.call(input.files || []);
+    else contentState.pendingFiles = Array.prototype.slice.call(input.files || []);
+    renderPendingContentFiles(scope);
   }
   window.handleContentFiles = handleContentFiles;
 
-  function removePendingContentFile(index) {
-    contentState.pendingFiles.splice(index, 1);
-    renderPendingContentFiles();
+  function removePendingContentFile(index, scope) {
+    scope = scope || 'internal_draft';
+    pendingFilesForScope(scope).splice(index, 1);
+    renderPendingContentFiles(scope);
   }
   window.removePendingContentFile = removePendingContentFile;
 
-  function clearPendingContentFiles() {
-    contentState.pendingFiles = [];
-    var input = document.getElementById('content-files-input');
+  function clearPendingContentFiles(scope) {
+    scope = scope || 'internal_draft';
+    if (scope === 'internal_reference') contentState.pendingReferenceFiles = [];
+    else contentState.pendingFiles = [];
+    var input = document.getElementById(scope === 'internal_reference' ? 'reference-files-input' : 'content-files-input');
     if (input) input.value = '';
-    renderPendingContentFiles();
+    renderPendingContentFiles(scope);
   }
   window.clearPendingContentFiles = clearPendingContentFiles;
 
@@ -676,22 +690,23 @@
     }
   }
 
-  function uploadedFileMetadata(prepared) {
-    return (prepared && prepared.uploads || []).map(function (upload) {
+  function uploadedFileMetadata(prepared, scopes) {
+    return (prepared && prepared.uploads || []).map(function (upload, index) {
       return {
         path: upload.path,
         fileName: upload.fileName,
         fileType: upload.fileType,
         fileSize: upload.fileSize,
         mimeType: upload.mimeType,
-        orderIndex: upload.orderIndex
+        orderIndex: upload.orderIndex,
+        fileScope: Array.isArray(scopes) ? scopes[index] : (scopes || 'internal_draft')
       };
     });
   }
 
-  function agencyContentFileRows(post) {
-    return (post.files || []).map(function (file) {
-      return '<div class="file-row"><div class="file-main"><b>' + esc(file.fileName) + '</b><span>' + esc(formatBytes(file.fileSize)) + '</span></div><div class="management-actions">' +
+  function agencyContentFileRows(post, scope) {
+    return (post.files || []).filter(function (file) { return !scope || file.fileScope === scope; }).map(function (file) {
+      return '<div class="file-row"><div class="file-main"><b>' + esc(file.fileName) + '</b><span>' + esc(formatBytes(file.fileSize)) + ' · ' + esc(file.fileScope === 'internal_reference' ? 'Referência interna' : file.fileScope === 'internal_draft' ? 'Arte em rascunho' : file.fileScope === 'client_current' ? 'Arte liberada' : 'Versão anterior') + '</span></div><div class="management-actions">' +
         '<a class="btn-xs" href="' + esc(file.previewUrl) + '" target="_blank" rel="noopener">Abrir</a>' +
         '<button type="button" class="btn-xs" style="color:var(--vermelho)" onclick="deleteContentFile(\'' + esc(file.id) + '\',\'' + esc(post.id) + '\',true)">Excluir arquivo</button>' +
       '</div></div>';
@@ -706,6 +721,7 @@
     var post = postId ? contentState.posts.find(function (item) { return item.id === postId; }) : null;
     var editing = Boolean(post);
     contentState.pendingFiles = [];
+    contentState.pendingReferenceFiles = [];
     var today = dateKey(new Date());
     var teamOptions = contentState.team.map(function (person) { return { value: person.id, label: person.name || person.email }; });
     var partnerOptions = contentState.partners.map(function (partner) {
@@ -721,31 +737,38 @@
       formField('Horário programado', '<input type="time" name="scheduled_time" required value="' + esc(post ? post.scheduledTime : '09:00') + '">')
     ];
     var copyFields = [
-      formField('Legenda / texto', '<textarea name="caption" placeholder="Escreva a legenda completa...">' + esc(post ? post.caption : '') + '</textarea>', true),
-      formField('Orientações para o cliente', '<textarea name="client_notes" placeholder="Ex.: publique no feed, marque o parceiro e use a música indicada...">' + esc(post ? post.clientNotes : '') + '</textarea>', true, 'Estas observações ficam visíveis para o cliente.'),
-      formField('Observações internas', '<textarea name="internal_notes" placeholder="Informações visíveis apenas para a agência...">' + esc(post ? post.internalNotes : '') + '</textarea>', true)
+      formField('Legenda / texto em preparação', '<textarea name="caption" placeholder="Escreva a legenda completa...">' + esc(post ? post.caption : '') + '</textarea>', true, 'O cliente só verá esta legenda depois de você clicar em “Liberar para o cliente”.'),
+      formField('Inspirações, referências e links', '<textarea name="internal_references" placeholder="Cole links, briefings, referências visuais e instruções para a criação...">' + esc(post ? post.internalReferences : '') + '</textarea>', true, 'Somente equipe. Nunca aparece para o cliente.'),
+      formField('Observações internas', '<textarea name="internal_notes" placeholder="Informações visíveis apenas para a equipe...">' + esc(post ? post.internalNotes : '') + '</textarea>', true, 'Somente equipe.'),
+      formField('Orientações que serão enviadas ao cliente', '<textarea name="client_notes" placeholder="Ex.: publique no feed, marque o parceiro e use a música indicada...">' + esc(post ? post.clientNotes : '') + '</textarea>', true, 'Ficam em preparação até a liberação manual.')
     ];
     var workflowFields = [
-      formField('Situação inicial', '<select name="status" required>' + options(statuses, post ? post.status : 'Rascunho') + '</select>'),
+      formField('Situação inicial', '<select name="status" required>' + options(statuses, post ? post.status : 'Rascunho') + '</select>', false, 'Esta é a situação interna. A liberação ao cliente é feita pelo botão específico.'),
       formField('Responsável interno', '<select name="assigned_to">' + (function () { var html = '<option value="">Não definido</option>'; return html + teamOptions.map(function (person) { return '<option value="' + esc(person.value) + '"' + (post && post.assignedTo === person.value ? ' selected' : '') + '>' + esc(person.label) + '</option>'; }).join(''); })() + '</select>'),
       formField('Parceiro responsável', '<select name="partner_id">' + (function () { var html = '<option value="">Sem parceiro atribuído</option>'; return html + partnerOptions.map(function (partner) { return '<option value="' + esc(partner.value) + '"' + (post && post.partnerId === partner.value ? ' selected' : '') + '>' + esc(partner.label) + '</option>'; }).join(''); })() + '</select>', false, 'Todos os parceiros ativos cadastrados aparecem aqui. Quando o login estiver vinculado, o parceiro poderá editar a legenda, atualizar a situação e anexar materiais. Esta atribuição não fica visível para o cliente.')
     ];
     if (!editing) {
       workflowFields.push(formField(
-        'Arquivos do conteúdo (opcional)',
-        '<div class="upload-zone"><div style="font-weight:700;margin-bottom:5px">Imagem, arte, vídeo ou PDF</div><input id="content-files-input" type="file" accept="image/*,video/*,application/pdf" multiple onchange="handleContentFiles(this)"></div><div id="pending-content-files" class="file-list pending-file-list"><div class="management-inline-empty">Nenhum arquivo selecionado.</div></div>',
+        'Inspirações e arquivos internos (opcional)',
+        '<div class="upload-zone"><div style="font-weight:700;margin-bottom:5px">Referências, imagens, vídeos ou PDF</div><input id="reference-files-input" type="file" accept="image/*,video/*,application/pdf" multiple onchange="handleContentFiles(this,\'internal_reference\')"></div><div id="pending-reference-files" class="file-list pending-file-list"><div class="management-inline-empty">Nenhum arquivo selecionado.</div></div>',
         true,
-        'Você pode salvar sem anexos e adicionar os materiais depois. Para carrossel, selecione as imagens na ordem correta.'
+        'Área 100% restrita à equipe.'
+      ));
+      workflowFields.push(formField(
+        'Arte em rascunho (opcional)',
+        '<div class="upload-zone"><div style="font-weight:700;margin-bottom:5px">Arte pronta ou versão preliminar</div><input id="content-files-input" type="file" accept="image/*,video/*,application/pdf" multiple onchange="handleContentFiles(this,\'internal_draft\')"></div><div id="pending-content-files" class="file-list pending-file-list"><div class="management-inline-empty">Nenhum arquivo selecionado.</div></div>',
+        true,
+        'Permanece oculta para o cliente até a validação e liberação.'
       ));
     } else {
-      workflowFields.push(formField('Arquivos atuais', '<div class="file-list">' + (agencyContentFileRows(post) || '<div class="management-inline-empty">Nenhum arquivo anexado.</div>') + '</div>', true));
-      workflowFields.push(formField('Adicionar novos arquivos', '<div class="upload-zone"><input id="content-files-input" type="file" accept="image/*,video/*,application/pdf" multiple onchange="handleContentFiles(this)"></div><div id="pending-content-files" class="file-list pending-file-list"><div class="management-inline-empty">Nenhum arquivo selecionado.</div></div>', true, 'Os novos arquivos serão adicionados sem substituir os atuais.'));
+      workflowFields.push(formField('Referências internas atuais', '<div class="file-list">' + (agencyContentFileRows(post, 'internal_reference') || '<div class="management-inline-empty">Nenhuma referência anexada.</div>') + '</div><div class="upload-zone"><input id="reference-files-input" type="file" accept="image/*,video/*,application/pdf" multiple onchange="handleContentFiles(this,\'internal_reference\')"></div><div id="pending-reference-files" class="file-list pending-file-list"><div class="management-inline-empty">Nenhum arquivo selecionado.</div></div>', true, 'Somente equipe.'));
+      workflowFields.push(formField('Arte em rascunho', '<div class="file-list">' + (agencyContentFileRows(post, 'internal_draft') || '<div class="management-inline-empty">Nenhuma arte em rascunho.</div>') + '</div><div class="upload-zone"><input id="content-files-input" type="file" accept="image/*,video/*,application/pdf" multiple onchange="handleContentFiles(this,\'internal_draft\')"></div><div id="pending-content-files" class="file-list pending-file-list"><div class="management-inline-empty">Nenhum arquivo selecionado.</div></div>', true, 'Oculta para o cliente até a liberação manual.'));
     }
     var html = modalHeader(editing ? 'Editar conteúdo' : 'Novo conteúdo') +
       '<form id="content-form" class="modal-body" onsubmit="saveContent(event,\'' + (post ? esc(post.id) : '') + '\')">' +
       '<section class="form-section"><div class="form-section-title">1. Planejamento</div><div class="form-section-desc">Defina o formato, a rede e quando o conteúdo deve ser publicado.</div><div class="form-grid">' + planningFields.join('') + '</div></section>' +
-      '<section class="form-section"><div class="form-section-title">2. Texto e orientações</div><div class="form-section-desc">Organize a legenda e as instruções que acompanharão a entrega.</div><div class="form-grid">' + copyFields.join('') + '</div></section>' +
-      '<section class="form-section"><div class="form-section-title">3. Arquivos e fluxo</div><div class="form-section-desc">Adicione o material agora ou depois e escolha quem ficará responsável.</div><div class="form-grid">' + workflowFields.join('') + '</div></section>' +
+      '<section class="form-section internal-team-area"><div class="form-section-title">2. Área interna da equipe <span class="release-badge internal">🔒 Somente equipe</span></div><div class="form-section-desc">Tudo aqui permanece invisível para o cliente até a liberação manual.</div><div class="form-grid">' + copyFields.join('') + '</div></section>' +
+      '<section class="form-section internal-team-area"><div class="form-section-title">3. Arquivos internos e fluxo</div><div class="form-section-desc">Adicione referências e a arte em rascunho, depois escolha os responsáveis.</div><div class="form-grid">' + workflowFields.join('') + '</div></section>' +
       '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeContentModal()">Cancelar</button>' +
       '<button id="save-content-button" type="submit" class="btn btn-primary">' + (editing ? 'Salvar alterações' : 'Salvar conteúdo') + '</button></div></form>';
     showModal(html, false);
@@ -772,6 +795,7 @@
           scheduledTime: formData.get('scheduled_time'),
           caption: formData.get('caption'),
           clientNotes: formData.get('client_notes'),
+          internalReferences: formData.get('internal_references'),
           internalNotes: formData.get('internal_notes'),
           status: formData.get('status'),
           assignedTo: formData.get('assigned_to'),
@@ -784,8 +808,13 @@
         });
       } else {
         var createData = new FormData(form);
+        var createFiles = contentState.pendingReferenceFiles.concat(contentState.pendingFiles);
+        var createFileScopes = contentState.pendingReferenceFiles.map(function () { return 'internal_reference'; })
+          .concat(contentState.pendingFiles.map(function () { return 'internal_draft'; }));
         if (contentState.pendingFiles.length) {
-          preparedUploads = await uploadContentFilesDirect(contentState.pendingFiles, '', button);
+          preparedUploads = await uploadContentFilesDirect(createFiles, '', button);
+        } else if (contentState.pendingReferenceFiles.length) {
+          preparedUploads = await uploadContentFilesDirect(createFiles, '', button);
         }
         button.textContent = 'Criando conteúdo...';
         var dates = createData.getAll('scheduled_date');
@@ -801,6 +830,7 @@
             scheduledTime: createData.get('scheduled_time'),
             caption: createData.get('caption'),
             clientNotes: createData.get('client_notes'),
+            internalReferences: createData.get('internal_references'),
             internalNotes: createData.get('internal_notes'),
             status: createData.get('status'),
             assignedTo: createData.get('assigned_to'),
@@ -808,19 +838,24 @@
             schedules: dates.map(function (date, index) {
               return { date: date, description: descriptions[index] || '' };
             }),
-            uploadedFiles: uploadedFileMetadata(preparedUploads)
+            // Keep fileless creation valid while preserving a scope for every optional upload.
+            // uploadedFiles: uploadedFileMetadata(preparedUploads)
+            uploadedFiles: uploadedFileMetadata(preparedUploads, createFileScopes)
           })
         });
         createdCount = Number(created.createdCount || 1);
         preparedUploads = null;
       }
-      if (postId && contentState.pendingFiles.length) {
-        preparedUploads = await uploadContentFilesDirect(contentState.pendingFiles, postId, button);
+      var editFiles = contentState.pendingReferenceFiles.concat(contentState.pendingFiles);
+      var editFileScopes = contentState.pendingReferenceFiles.map(function () { return 'internal_reference'; })
+        .concat(contentState.pendingFiles.map(function () { return 'internal_draft'; }));
+      if (postId && editFiles.length) {
+        preparedUploads = await uploadContentFilesDirect(editFiles, postId, button);
         button.textContent = 'Vinculando arquivos...';
         await apiJson('/api/post-files', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ postId: postId, uploadedFiles: uploadedFileMetadata(preparedUploads) })
+          body: JSON.stringify({ postId: postId, uploadedFiles: uploadedFileMetadata(preparedUploads, editFileScopes), fileScope: 'internal_draft' })
         });
         preparedUploads = null;
       }
@@ -837,10 +872,10 @@
   }
   window.saveContent = saveContent;
 
-  function assignedContentFileRows(post) {
+  function assignedContentFileRows(post, scope) {
     var actor = currentActor();
-    return (post.files || []).map(function (file) {
-      var canDelete = file.uploadedBy && file.uploadedBy === actor.id;
+    return (post.files || []).filter(function (file) { return !scope || file.fileScope === scope; }).map(function (file) {
+      var canDelete = file.uploadedBy && file.uploadedBy === actor.id && (file.fileScope === 'internal_reference' || file.fileScope === 'internal_draft');
       return '<div class="file-row"><div class="file-main"><b>' + esc(file.fileName) + '</b><span>' + esc(formatBytes(file.fileSize)) + '</span></div><div class="management-actions"><a class="btn-xs" href="' + esc(file.previewUrl) + '" target="_blank" rel="noopener">Abrir</a><a class="btn-xs" href="' + esc(file.downloadUrl) + '" download>Baixar</a>' + (canDelete ? '<button type="button" class="btn-xs" style="color:var(--vermelho)" onclick="deleteAssignedPostFile(\'' + esc(file.id) + '\',\'' + esc(post.id) + '\')">Excluir meu envio</button>' : '') + '</div></div>';
     }).join('');
   }
@@ -852,16 +887,20 @@
     }
     var post = contentState.posts.find(function (item) { return item.id === id; });
     if (!post) return;
-    var files = assignedContentFileRows(post);
+    var referenceFiles = assignedContentFileRows(post, 'internal_reference');
+    var draftFiles = assignedContentFileRows(post, 'internal_draft');
     var html = modalHeader('Atualizar conteúdo atribuído') +
       '<form id="assigned-content-form" onsubmit="saveAssignedContent(event,\'' + esc(post.id) + '\')"><div class="modal-body">' +
       '<div class="detail-summary"><span class="tag tag-roxo">' + esc(post.contentType) + '</span><h3>' + esc(post.title) + '</h3><p>' + esc(companyName()) + ' · ' + esc(formatDate(post.scheduledDate)) + ' às ' + esc(post.scheduledTime) + '</p></div>' +
-      '<section class="form-section"><div class="form-section-title">Descrição e andamento</div><div class="form-section-desc">Você pode atualizar a descrição/legenda e a situação deste conteúdo.</div><div class="form-grid">' +
+      '<section class="form-section internal-team-area"><div class="form-section-title">Área interna da equipe <span class="release-badge internal">🔒 Somente equipe</span></div><div class="form-section-desc">Você pode preparar o conteúdo e anexar materiais. O cliente não visualiza esta área.</div><div class="form-grid">' +
       formField('Situação', '<select name="status" required>' + options(statuses, post.status) + '</select>') +
-      formField('Descrição / legenda', '<textarea name="caption" placeholder="Atualize as informações do conteúdo...">' + esc(post.caption || '') + '</textarea>', true) +
+      formField('Legenda / texto em preparação', '<textarea name="caption" placeholder="Atualize as informações do conteúdo...">' + esc(post.caption || '') + '</textarea>', true) +
+      formField('Inspirações, referências e links', '<textarea name="internal_references" placeholder="Cole referências e orientações para a criação...">' + esc(post.internalReferences || '') + '</textarea>', true) +
+      formField('Observações internas', '<textarea name="internal_notes" placeholder="Informações somente para a equipe...">' + esc(post.internalNotes || '') + '</textarea>', true) +
+      formField('Orientações preparadas para o cliente', '<textarea name="client_notes" placeholder="Estas orientações serão enviadas na liberação...">' + esc(post.clientNotes || '') + '</textarea>', true) +
       '</div></section>' +
-      '<section class="form-section"><div class="form-section-title">Materiais anexados</div><div class="form-section-desc">Fotografias, calendários, documentos e demais arquivos ficam vinculados a este conteúdo.</div><div class="file-list">' + (files || '<div class="management-inline-empty">Nenhum material anexado ainda.</div>') + '</div></section>' +
-      '<label class="upload-zone upload-zone-active"><span class="upload-icon">' + ico.upload + '</span><b>Anexar novos materiais</b><span>Selecione os arquivos na ordem desejada. Os originais serão preservados sem compressão.</span><input name="files" type="file" multiple></label>' +
+      '<section class="form-section internal-team-area"><div class="form-section-title">Inspirações e referências</div><div class="file-list">' + (referenceFiles || '<div class="management-inline-empty">Nenhuma referência anexada.</div>') + '</div><label class="upload-zone upload-zone-active"><span class="upload-icon">' + ico.upload + '</span><b>Anexar referências internas</b><span>Imagens, vídeos ou PDF. Somente a equipe terá acesso.</span><input name="reference_files" type="file" accept="image/*,video/*,application/pdf" multiple></label></section>' +
+      '<section class="form-section internal-team-area"><div class="form-section-title">Arte em rascunho</div><div class="file-list">' + (draftFiles || '<div class="management-inline-empty">Nenhuma arte em rascunho.</div>') + '</div><label class="upload-zone upload-zone-active"><span class="upload-icon">' + ico.upload + '</span><b>Anexar arte pronta ou preliminar</b><span>Ficará oculta para o cliente até a validação dos sócios.</span><input name="draft_files" type="file" accept="image/*,video/*,application/pdf" multiple></label></section>' +
       '</div><div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeContentModal()">Cancelar</button><button id="save-assigned-content-button" class="btn btn-primary" type="submit">Salvar atualização</button></div></form>';
     showModal(html, true);
   }
@@ -878,16 +917,19 @@
       await apiJson('/api/posts/' + encodeURIComponent(id), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caption: data.get('caption'), status: data.get('status') })
+        body: JSON.stringify({ caption: data.get('caption'), clientNotes: data.get('client_notes'), internalReferences: data.get('internal_references'), internalNotes: data.get('internal_notes'), status: data.get('status') })
       });
-      var files = data.getAll('files').filter(function (file) { return file && file.size > 0; });
+      var referenceFiles = data.getAll('reference_files').filter(function (file) { return file && file.size > 0; });
+      var draftFiles = data.getAll('draft_files').filter(function (file) { return file && file.size > 0; });
+      var files = referenceFiles.concat(draftFiles);
+      var fileScopes = referenceFiles.map(function () { return 'internal_reference'; }).concat(draftFiles.map(function () { return 'internal_draft'; }));
       if (files.length) {
         preparedUploads = await uploadContentFilesDirect(files, id, button);
         if (button) button.textContent = 'Vinculando arquivos...';
         await apiJson('/api/post-files', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ postId: id, uploadedFiles: uploadedFileMetadata(preparedUploads) })
+          body: JSON.stringify({ postId: id, uploadedFiles: uploadedFileMetadata(preparedUploads, fileScopes), fileScope: 'internal_draft' })
         });
         preparedUploads = null;
       }
@@ -929,8 +971,14 @@
   }
   window.deleteContentFile = deleteContentFile;
 
-  function mainPreview(post) {
-    var file = post.files && post.files[0];
+  function filesWithScope(post, scope) {
+    return (post.files || []).filter(function (file) {
+      return Array.isArray(scope) ? scope.indexOf(file.fileScope) !== -1 : file.fileScope === scope;
+    });
+  }
+
+  function mainPreview(post, files) {
+    var file = files && files[0];
     if (!file) return '<div style="color:#fff;text-align:center">' + ico.material + '<div style="margin-top:8px">Sem arquivo</div></div>';
     if (String(file.fileType).indexOf('image/') === 0) {
       return '<img src="' + esc(file.previewUrl) + '" alt="' + esc(post.title) + '">';
@@ -944,17 +992,40 @@
     return '<div style="color:#fff">Arquivo disponível para download</div>';
   }
 
+  function detailFileRows(post, files, allowDelete) {
+    return (files || []).map(function (file, index) {
+      var remove = allowDelete && (file.fileScope === 'internal_reference' || file.fileScope === 'internal_draft')
+        ? '<button type="button" class="btn-xs" style="color:var(--vermelho)" onclick="deleteContentFile(\'' + esc(file.id) + '\',\'' + esc(post.id) + '\',false)">Excluir</button>'
+        : '';
+      return '<div class="file-row"><div class="file-main"><a class="file-link" href="' + esc(file.downloadUrl) + '" download>↓ ' +
+        esc((index + 1) + '. ' + file.fileName) + ' · ' + esc(formatBytes(file.fileSize)) + '</a></div>' + remove + '</div>';
+    }).join('');
+  }
+
+  function safeDetailText(label, value, fallback) {
+    return '<div class="detail-row"><div class="detail-label">' + esc(label) + '</div><div class="detail-value">' + esc(value || fallback || 'Não informado.') + '</div></div>';
+  }
+
   function openContentDetails(id) {
     var post = contentState.posts.find(function (item) { return item.id === id; });
     if (!post) return;
     var color = statusColors[post.status] || '#7c3aed';
-    var files = (post.files || []).map(function (file, index) {
-      return '<div class="file-row"><div class="file-main"><a class="file-link" href="' + esc(file.downloadUrl) + '" download>↓ Original ' +
-        esc((index + 1) + '. ' + file.fileName) + ' · ' + esc(formatBytes(file.fileSize)) + '</a></div>' +
-        (contentState.permissions.canManage ? '<button type="button" class="btn-xs" style="color:var(--vermelho)" onclick="deleteContentFile(\'' + esc(file.id) + '\',\'' + esc(post.id) + '\',false)">Excluir</button>' : '') + '</div>';
-    }).join('');
+    var internalAccess = contentState.permissions.canManage || contentState.permissions.canEditAssigned;
+    var referenceFiles = filesWithScope(post, 'internal_reference');
+    var draftFiles = filesWithScope(post, 'internal_draft');
+    var clientFiles = filesWithScope(post, 'client_current');
+
+    if (contentState.clientMode && !post.isClientReleased) {
+      var unreleased = modalHeader(post.title) +
+        '<div class="modal-body"><div class="detail-summary"><span class="tag" style="background:' + color + '18;color:' + color + '"><span class="status-dot" style="background:' + color + '"></span>Em produção</span><h3>' + esc(post.title) + '</h3><p>' + esc(formatDate(post.scheduledDate)) + ' às ' + esc(post.scheduledTime) + ' · ' + esc(post.contentType) + ' · ' + esc(post.socialNetwork) + '</p></div>' +
+        '<section class="client-facing-area client-waiting"><div class="client-area-icon">🔒</div><div><h3>Conteúdo em produção</h3><p>A demanda já está programada, mas a arte e a legenda ainda estão em validação interna. Você receberá acesso automaticamente quando a equipe liberar para aprovação.</p></div></section>' +
+        '<div class="modal-actions"><button class="btn btn-primary" onclick="closeContentModal()">Fechar</button></div></div>';
+      showModal(unreleased, true);
+      return;
+    }
+
     var review = '';
-    if (!contentState.permissions.canManage && contentState.permissions.canReview) {
+    if (contentState.permissions.canReview && post.isClientReleased) {
       var reviewActions = [
         post.status !== 'Aprovado' && post.status !== 'Publicado' ? '<button class="btn btn-primary" onclick="reviewContent(\'' + esc(post.id) + '\',\'Aprovado\')">✓ Aprovar</button>' : '',
         post.status !== 'Publicado' ? '<button class="btn btn-ghost" onclick="reviewContent(\'' + esc(post.id) + '\',\'Revisão solicitada\')">Solicitar alteração</button>' : '',
@@ -971,10 +1042,16 @@
         '</div>'
       ].join('');
     }
-    var management = contentState.permissions.canManage ? [
-      '<button class="btn btn-ghost" onclick="openContentForm(\'' + esc(post.id) + '\')">Editar</button>',
-      '<button class="btn btn-ghost" style="color:var(--vermelho)" onclick="deleteContent(\'' + esc(post.id) + '\')">Excluir</button>'
-    ].join('') : contentState.permissions.canEditAssigned ? '<button class="btn btn-primary" onclick="openAssignedContentForm(\'' + esc(post.id) + '\')">Atualizar e anexar materiais</button>' : '';
+    var management = '';
+    if (contentState.permissions.canManage) {
+      management = '<button class="btn btn-ghost" onclick="openContentForm(\'' + esc(post.id) + '\')">Editar área interna</button>' +
+        (!post.internalValidated
+          ? '<button class="btn btn-primary" onclick="runInternalContentAction(\'' + esc(post.id) + '\',\'validate_internal\')">✓ Validar internamente</button>'
+          : '<button class="btn btn-primary" onclick="runInternalContentAction(\'' + esc(post.id) + '\',\'release_to_client\')">' + (post.isClientReleased ? 'Liberar atualização para o cliente' : 'Liberar para o cliente') + '</button>') +
+        '<button class="btn btn-ghost" style="color:var(--vermelho)" onclick="deleteContent(\'' + esc(post.id) + '\')">Excluir</button>';
+    } else if (contentState.permissions.canEditAssigned) {
+      management = '<button class="btn btn-primary" onclick="openAssignedContentForm(\'' + esc(post.id) + '\')">Atualizar área interna</button>';
+    }
     var responsibilityDetails = '';
     if (contentState.permissions.canManage) {
       var internalResponsible = contentState.team.find(function (person) { return person.id === post.assignedTo; });
@@ -985,32 +1062,72 @@
       responsibilityDetails = '<div class="detail-row"><div class="detail-label">Atribuição</div><div class="detail-value">Atribuído a você</div></div>';
     }
     var commentHistory = (post.comments || []).length ? '<div class="detail-row"><div class="detail-label">Histórico de comentários</div>' + post.comments.map(function (comment) { return '<div style="padding:10px 0;border-bottom:1px solid var(--cinza-borda)"><div style="font-size:12px;font-weight:700">' + esc(comment.author) + '</div><div class="detail-value">' + esc(comment.comment) + '</div></div>'; }).join('') + '</div>' : '';
-    var html = modalHeader(post.title) +
-      '<div class="modal-body"><div class="detail-grid">' +
-      '<div><div class="file-gallery">' + mainPreview(post) + '</div><div class="file-links">' + files + '</div></div>' +
-      '<div class="detail-info">' +
-        '<div><span class="tag" style="background:' + color + '18;color:' + color + '"><span class="status-dot" style="background:' + color + '"></span>' + esc(post.status) + '</span></div>' +
-        '<div class="detail-row"><div class="detail-label">Programação</div><div class="detail-value">' + esc(formatDate(post.scheduledDate)) + ' às ' + esc(post.scheduledTime) + '</div></div>' +
-        '<div class="detail-row"><div class="detail-label">Formato e rede</div><div class="detail-value">' + esc(post.contentType) + ' · ' + esc(post.socialNetwork) + '</div></div>' +
-        '<div class="detail-row"><div class="detail-label">Legenda / texto</div><div class="detail-value">' + esc(post.caption || 'Sem legenda cadastrada.') + '</div><button class="btn btn-ghost" style="margin-top:9px;padding:7px 10px" onclick="copyCaption(\'' + esc(post.id) + '\')">Copiar legenda</button></div>' +
-        (post.clientNotes ? '<div class="detail-row"><div class="detail-label">Orientações para publicação</div><div class="detail-value">' + esc(post.clientNotes) + '</div></div>' : '') +
-        (contentState.permissions.canManage ? '<div class="detail-row"><div class="detail-label">Observações internas</div><div class="detail-value">' + esc(post.internalNotes || 'Sem observações.') + '</div></div>' : '') +
-        (contentState.permissions.canManage && post.clientFeedback ? '<div class="detail-row"><div class="detail-label">Comentário do cliente</div><div class="detail-value">' + esc(post.clientFeedback) + '</div></div>' : '') +
-        commentHistory +
-        responsibilityDetails +
-        (contentState.clientMode ? '<div class="client-review" style="background:#f8fafc;border-color:#e2e8f0"><b style="font-size:12px">Publicação manual e segura</b><div class="page-desc">Nenhuma senha de rede social é solicitada. Use os arquivos e a legenda acima para publicar na sua própria conta.</div></div>' : '') +
-        (contentState.permissions.canEditAssigned ? '<div class="client-review" style="background:#f8fafc;border-color:#e2e8f0"><b style="font-size:12px">Conteúdo sob sua responsabilidade</b><div class="page-desc">Você pode atualizar a descrição, mudar a situação e anexar os materiais para conferência dos sócios.</div></div>' : '') +
-        review +
-      '</div></div><div class="modal-actions">' + management + '<button class="btn btn-primary" onclick="closeContentModal()">Fechar</button></div></div>';
+    var summary = '<div class="detail-summary content-release-summary"><div><span class="tag" style="background:' + color + '18;color:' + color + '"><span class="status-dot" style="background:' + color + '"></span>' + esc(post.status) + '</span>' +
+      (internalAccess ? '<span class="release-badge ' + (post.isClientReleased ? 'sent' : 'internal') + '">' + (post.isClientReleased ? '✓ Enviado ao cliente' : '🔒 Não enviado') + '</span>' : '') + '</div><h3>' + esc(post.title) + '</h3><p>' + esc(formatDate(post.scheduledDate)) + ' às ' + esc(post.scheduledTime) + ' · ' + esc(post.contentType) + ' · ' + esc(post.socialNetwork) + '</p></div>';
+    var internalArea = internalAccess ? [
+      '<section class="content-workspace internal-team-area">',
+        '<div class="workspace-title"><div><h3>Área interna da equipe</h3><p>Referências, observações e rascunhos. O cliente não visualiza nada desta área.</p></div><span class="release-badge internal">🔒 Somente equipe</span></div>',
+        '<div class="detail-grid">',
+          '<div><h4>Arte em rascunho</h4><div class="file-gallery internal-preview">' + mainPreview(post, draftFiles) + '</div><div class="file-links">' + (detailFileRows(post, draftFiles, contentState.permissions.canManage) || '<div class="management-inline-empty">Nenhuma arte em rascunho.</div>') + '</div><h4 class="section-subtitle">Inspirações e arquivos internos</h4><div class="file-links">' + (detailFileRows(post, referenceFiles, contentState.permissions.canManage) || '<div class="management-inline-empty">Nenhuma referência anexada.</div>') + '</div></div>',
+          '<div class="detail-info">',
+            safeDetailText('Legenda em preparação', post.caption, 'Sem legenda em preparação.'),
+            safeDetailText('Inspirações, referências e links', post.internalReferences, 'Sem referências cadastradas.'),
+            safeDetailText('Observações internas', post.internalNotes, 'Sem observações internas.'),
+            safeDetailText('Orientações preparadas para o cliente', post.clientNotes, 'Sem orientações.'),
+            '<div class="validation-card ' + (post.internalValidated ? 'validated' : '') + '"><b>' + (post.internalValidated ? '✓ Validação interna concluída' : 'Validação interna pendente') + '</b><span>' + (post.internalValidated ? 'O conteúdo pode ser liberado para o cliente.' : 'Um sócio precisa validar antes da liberação.') + '</span></div>',
+            responsibilityDetails,
+          '</div>',
+        '</div>',
+      '</section>'
+    ].join('') : '';
+    var releasedCaption = internalAccess ? post.clientCaption : post.caption;
+    var releasedNotes = internalAccess ? post.clientNotesReleased : post.clientNotes;
+    var clientArea = [
+      '<section class="content-workspace client-facing-area">',
+        '<div class="workspace-title"><div><h3>Área do cliente</h3><p>' + (post.isClientReleased ? 'Esta é a versão atualmente disponível para o cliente.' : 'Ainda não há arte ou legenda liberada para o cliente.') + '</p></div><span class="release-badge ' + (post.isClientReleased ? 'sent' : 'internal') + '">' + (post.isClientReleased ? '✓ Enviado ao cliente' : '🔒 Não enviado') + '</span></div>',
+        '<div class="detail-grid">',
+          '<div><div class="file-gallery">' + mainPreview(post, clientFiles) + '</div><div class="file-links">' + (detailFileRows(post, clientFiles, false) || '<div class="management-inline-empty">Nenhuma arte liberada.</div>') + '</div></div>',
+          '<div class="detail-info">',
+            safeDetailText('Data de publicação', formatDate(post.scheduledDate) + ' às ' + post.scheduledTime),
+            safeDetailText('Formato e rede', post.contentType + ' · ' + post.socialNetwork),
+            '<div class="detail-row"><div class="detail-label">Legenda liberada</div><div class="detail-value">' + esc(releasedCaption || 'Sem legenda liberada.') + '</div>' + (releasedCaption ? '<button class="btn btn-ghost" style="margin-top:9px;padding:7px 10px" onclick="copyCaption(\'' + esc(post.id) + '\')">Copiar legenda</button>' : '') + '</div>',
+            (releasedNotes ? safeDetailText('Orientações para publicação', releasedNotes) : ''),
+            (internalAccess && post.clientFeedback ? safeDetailText('Comentário do cliente', post.clientFeedback) : ''),
+            commentHistory,
+            (contentState.clientMode ? '<div class="client-review" style="background:#f8fafc;border-color:#e2e8f0"><b style="font-size:12px">Publicação manual e segura</b><div class="page-desc">Nenhuma senha de rede social é solicitada. Use os arquivos e a legenda acima para publicar na sua própria conta.</div></div>' : ''),
+            review,
+          '</div>',
+        '</div>',
+      '</section>'
+    ].join('');
+    var html = modalHeader(post.title) + '<div class="modal-body">' + summary + internalArea + clientArea + '<div class="modal-actions">' + management + '<button class="btn btn-ghost" onclick="closeContentModal()">Fechar</button></div></div>';
     showModal(html, true);
   }
   window.openContentDetails = openContentDetails;
+
+  async function runInternalContentAction(id, action) {
+    if (action === 'release_to_client' && !window.confirm('Liberar a arte e a legenda atuais para o cliente?')) return;
+    try {
+      await apiJson('/api/posts/' + encodeURIComponent(id), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(action === 'release_to_client'
+          ? { tenantId: contentState.tenantId, action: 'release_to_client' }
+          : { tenantId: contentState.tenantId, action: 'validate_internal' })
+      });
+      closeContentModal();
+      showToast(action === 'validate_internal' ? 'Conteúdo validado internamente.' : 'Conteúdo enviado para aprovação do cliente.');
+      await loadContentPosts();
+      openContentDetails(id);
+    } catch (error) { showToast(error.message, true); }
+  }
+  window.runInternalContentAction = runInternalContentAction;
 
   async function copyCaption(id) {
     var post = contentState.posts.find(function (item) { return item.id === id; });
     if (!post) return;
     try {
-      await navigator.clipboard.writeText(post.caption || '');
+      await navigator.clipboard.writeText((contentState.clientMode ? post.caption : post.clientCaption || post.caption) || '');
       showToast('Legenda copiada.');
     } catch (error) {
       showToast('Não foi possível copiar a legenda.', true);
