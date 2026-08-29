@@ -21,6 +21,15 @@
     commercialOwners: [],
     companyRelationshipFilter: 'todos',
     leadDisplay: 'funil',
+    commercialMeetings: [],
+    commercialPartners: [],
+    commercialAvailability: [],
+    commercialBlocks: [],
+    commercialSlots: [],
+    commercialCompanies: [],
+    commercialStats: {},
+    commercialSelectedPartner: 'central',
+    commercialCanManageSchedule: false,
     canManageAccess: false,
     session: null,
     loginInProgress: false
@@ -1781,6 +1790,328 @@
 
   paginas['c-materiais'] = function () { return paginas['c-conteudo'](); };
   paginas['c-entregas'] = function () { var html = paginas['c-conteudo'](); window.setTimeout(function () { if (window.changeCalendarView) window.changeCalendarView('list'); }, 250); return html; };
+
+  var meetingStatusLabels = { agendada: 'Agendada', realizada: 'Realizada', no_show: 'No show', cancelada: 'Cancelada' };
+  var meetingResultLabels = { qualificado: 'Qualificado', desqualificado: 'Desqualificado' };
+  var meetingWeekdays = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+
+  function meetingDateInput(value) {
+    var date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    var local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 10);
+  }
+
+  function meetingRange() {
+    var now = new Date();
+    var from = new Date(now.getFullYear(), now.getMonth(), 1);
+    var to = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+    return { from: meetingDateInput(from), to: meetingDateInput(to) };
+  }
+
+  function meetingPageHeader(client) {
+    if (client) {
+      return '<div class="page-head"><div><h1 class="page-title">Agendar reunião comercial</h1><p class="page-desc">Escolha um horário disponível e receba automaticamente o link do Google Meet</p></div><button class="btn btn-primary" onclick="openCommercialBooking()">+ Agendar reunião</button></div>';
+    }
+    return '<div class="page-head"><div><h1 class="page-title">Central de reuniões comerciais</h1><p class="page-desc">Agendas dos sócios, reservas, Google Meet e acompanhamento dos resultados</p></div><div class="management-actions"><button class="btn btn-ghost" onclick="openCommercialAvailability()">Disponibilidade</button><button class="btn btn-ghost" onclick="openCommercialBlock()">Bloquear horário</button><button class="btn btn-primary" onclick="openCommercialBooking()">+ Nova reunião</button></div></div>';
+  }
+
+  paginas['reunioes-comerciais'] = function () {
+    window.setTimeout(loadCommercialMeetings, 0);
+    var range = meetingRange();
+    return meetingPageHeader(false) +
+      '<div class="meeting-rule-banner"><div><h3>Luciano é o sócio de referência</h3><p>O horário fica disponível somente quando Luciano estiver livre. Alexandre e Lucas não bloqueiam a agenda comercial.</p></div><strong>Luciano disponível = horário liberado</strong></div>' +
+      '<div class="meeting-toolbar">' +
+        field('De', '<input id="meeting-filter-from" type="date" value="' + range.from + '" onchange="loadCommercialMeetings()">') +
+        field('Até', '<input id="meeting-filter-to" type="date" value="' + range.to + '" onchange="loadCommercialMeetings()">') +
+        field('Situação', '<select id="meeting-filter-status" onchange="loadCommercialMeetings()"><option value="">Todas</option><option value="agendada">Agendadas</option><option value="realizada">Realizadas</option><option value="no_show">No shows</option><option value="cancelada">Canceladas</option></select>') +
+        '<button class="btn btn-ghost" onclick="loadCommercialMeetings()">Atualizar</button>' +
+      '</div><div id="commercial-meetings-area">' + loading('commercial-meetings-loading', 'Carregando central comercial...') + '</div>';
+  };
+
+  paginas['c-reunioes'] = function () {
+    window.setTimeout(loadCommercialMeetings, 0);
+    return meetingPageHeader(true) + '<div id="commercial-meetings-area">' + loading('commercial-meetings-loading', 'Consultando horários disponíveis...') + '</div>';
+  };
+
+  async function loadCommercialMeetings() {
+    var area = document.getElementById('commercial-meetings-area'); if (!area) return;
+    var range = meetingRange();
+    var from = document.getElementById('meeting-filter-from') ? document.getElementById('meeting-filter-from').value : range.from;
+    var to = document.getElementById('meeting-filter-to') ? document.getElementById('meeting-filter-to').value : range.to;
+    var status = document.getElementById('meeting-filter-status') ? document.getElementById('meeting-filter-status').value : '';
+    area.innerHTML = loading('commercial-meetings-loading', 'Atualizando agendas e horários...');
+    try {
+      var query = new URLSearchParams({ from: from, to: to });
+      if (status) query.set('status', status);
+      var payload = await api('/api/commercial-meetings?' + query.toString());
+      state.commercialMeetings = payload.meetings || [];
+      state.commercialPartners = payload.partners || [];
+      state.commercialAvailability = payload.availability || [];
+      state.commercialBlocks = payload.blocks || [];
+      state.commercialSlots = payload.slots || [];
+      state.commercialCompanies = payload.companies || [];
+      state.commercialStats = payload.stats || {};
+      state.commercialCanManageSchedule = !!payload.canManageSchedule;
+      state.commercialActor = payload.actor || {};
+      if (payload.isAgency) renderCommercialMeetingCenter(); else renderClientMeetingCenter();
+    } catch (error) {
+      area.innerHTML = empty('Não foi possível abrir a central de reuniões', error.message, '<button class="btn btn-primary" onclick="loadCommercialMeetings()">Tentar novamente</button>');
+    }
+  }
+  window.loadCommercialMeetings = loadCommercialMeetings;
+
+  function meetingStats() {
+    var stats = state.commercialStats || {};
+    return '<div class="grid g-3" style="margin-bottom:12px">' +
+      kpi('agenda', String(stats.scheduled || 0), 'Reuniões agendadas') +
+      kpi('check', String(stats.completed || 0), 'Reuniões realizadas') +
+      kpi('clock', String(stats.noShow || 0), 'No shows') +
+    '</div><div class="grid g-3" style="margin-bottom:18px">' +
+      kpi('clientes', String(stats.qualified || 0), 'Clientes qualificados') +
+      kpi('trend', String(stats.disqualified || 0), 'Clientes desqualificados') +
+      kpi('clock', String(stats.cancelled || 0), 'Cancelamentos') +
+    '</div>';
+  }
+
+  function meetingPartnerTabs() {
+    var selected = state.commercialSelectedPartner;
+    return '<div class="meeting-partner-tabs"><button class="meeting-partner-tab ' + (selected === 'central' ? 'active' : '') + '" onclick="selectCommercialPartner(\'central\')"><i></i>Agenda comercial</button>' +
+      state.commercialPartners.map(function (partner) {
+        return '<button class="meeting-partner-tab ' + (partner.isReference ? 'reference ' : '') + (selected === partner.profileId ? 'active' : '') + '" onclick="selectCommercialPartner(\'' + esc(partner.profileId) + '\')"><i></i>' + esc(partner.name) + (partner.isReference ? ' · referência' : '') + '</button>';
+      }).join('') + '</div>';
+  }
+
+  function selectCommercialPartner(profileId) {
+    state.commercialSelectedPartner = profileId || 'central';
+    renderCommercialMeetingCenter();
+  }
+  window.selectCommercialPartner = selectCommercialPartner;
+
+  function meetingCard(meeting, client) {
+    var start = new Date(meeting.startsAt);
+    var dateLabel = Number.isNaN(start.getTime()) ? '' : start.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+    var timeLabel = Number.isNaN(start.getTime()) ? '' : start.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    var sync = meeting.googleSyncStatus === 'sincronizado'
+      ? '<span class="meeting-sync synced">● Meet gerado</span>'
+      : '<span class="meeting-sync">● Google pendente</span>';
+    return '<button class="meeting-card" onclick="openCommercialMeeting(\'' + esc(meeting.id) + '\')"><span class="meeting-card-time"><b>' + esc(timeLabel) + '</b><span>' + esc(dateLabel) + '</span></span><span class="meeting-card-body"><b>' + esc(meeting.clientName) + '</b><span>' + esc((meeting.clientCompany || meeting.companyName || 'Cliente') + ' · ' + (meeting.serviceInterest || 'Reunião comercial')) + '</span><span class="meeting-status ' + esc(meeting.status) + '">' + esc(meetingStatusLabels[meeting.status] || meeting.status) + (meeting.result ? ' · ' + esc(meetingResultLabels[meeting.result] || meeting.result) : '') + '</span> ' + sync + '</span><span class="meeting-card-action">' + (client ? 'Ver reunião' : 'Abrir gestão') + ' ›</span></button>';
+  }
+
+  function meetingAvailabilityPanel(profileId) {
+    if (profileId === 'central') {
+      var slots = state.commercialSlots.slice(0, 12);
+      return '<section class="meeting-side-section"><h4>Próximos horários liberados</h4>' + (slots.length ? '<div class="slot-grid">' + slots.map(function (slot) {
+        var start = new Date(slot.startsAt);
+        return '<button class="slot-button" onclick="openCommercialBooking(\'' + esc(slot.startsAt) + '\')">' + esc(start.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })) + '<br>' + esc(start.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })) + '</button>';
+      }).join('') + '</div>' : '<div class="meeting-empty">Luciano ainda não informou disponibilidade neste período.</div>') + '</section>';
+    }
+    var availability = state.commercialAvailability.filter(function (item) { return item.profileId === profileId && item.active; });
+    var blocks = state.commercialBlocks.filter(function (item) { return item.profileId === profileId; });
+    return '<section class="meeting-side-section"><h4>Disponibilidade semanal</h4>' + (availability.length ? availability.map(function (item) {
+      return '<div class="availability-line"><span><b>' + esc(meetingWeekdays[item.weekday]) + '</b><br>' + esc(item.startTime + ' às ' + item.endTime) + '</span>' + (state.commercialCanManageSchedule ? '<button onclick="deleteCommercialSchedule(\'availability\',\'' + esc(item.id) + '\')">Excluir</button>' : '') + '</div>';
+    }).join('') : '<div class="meeting-empty">Nenhuma disponibilidade informada.</div>') + '</section><section class="meeting-side-section"><h4>Bloqueios no período</h4>' + (blocks.length ? blocks.map(function (item) {
+      return '<div class="block-line"><span><b>' + esc(dateTimeBR(item.startsAt)) + '</b><br>' + esc(item.reason || 'Indisponível') + '</span>' + (state.commercialCanManageSchedule ? '<button onclick="deleteCommercialSchedule(\'block\',\'' + esc(item.id) + '\')">Excluir</button>' : '') + '</div>';
+    }).join('') : '<div class="meeting-empty">Nenhum bloqueio neste período.</div>') + '</section>';
+  }
+
+  function renderCommercialMeetingCenter() {
+    var area = document.getElementById('commercial-meetings-area'); if (!area) return;
+    var selected = state.commercialSelectedPartner;
+    if (selected !== 'central' && !state.commercialPartners.some(function (partner) { return partner.profileId === selected; })) selected = state.commercialSelectedPartner = 'central';
+    var title = selected === 'central' ? 'Agenda comercial centralizada' : 'Agenda de ' + ((state.commercialPartners.find(function (partner) { return partner.profileId === selected; }) || {}).name || 'sócio');
+    area.innerHTML = meetingStats() + meetingPartnerTabs() + '<div class="meeting-grid"><section class="meeting-panel"><div class="meeting-panel-head"><div><h3>' + esc(title) + '</h3><p>Todas as reuniões entram automaticamente nas agendas dos três sócios.</p></div><span class="tag tag-roxo">' + state.commercialMeetings.length + ' reunião' + (state.commercialMeetings.length === 1 ? '' : 'ões') + '</span></div><div class="meeting-list">' +
+      (state.commercialMeetings.length ? state.commercialMeetings.map(function (meeting) { return meetingCard(meeting, false); }).join('') : '<div class="meeting-empty">Nenhuma reunião encontrada nos filtros atuais.</div>') +
+      '</div></section><aside class="meeting-panel">' + meetingAvailabilityPanel(selected) + '</aside></div>';
+  }
+
+  function renderClientMeetingCenter() {
+    var area = document.getElementById('commercial-meetings-area'); if (!area) return;
+    var slots = state.commercialSlots.slice(0, 16);
+    var upcoming = state.commercialMeetings.filter(function (meeting) { return meeting.status === 'agendada' && new Date(meeting.startsAt) >= new Date(); });
+    area.innerHTML = '<div class="client-meeting-layout"><section class="client-meeting-hero"><h2>Escolha seu melhor horário</h2><p>Os horários abaixo já consideram automaticamente a disponibilidade do Luciano e as reuniões existentes.</p>' +
+      (slots.length ? '<div class="slot-grid">' + slots.map(function (slot) { var start = new Date(slot.startsAt); return '<button class="slot-button" onclick="openCommercialBooking(\'' + esc(slot.startsAt) + '\')">' + esc(start.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })) + '<br>' + esc(start.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })) + '</button>'; }).join('') + '</div>' : '<div class="meeting-empty">Não há horários liberados neste momento. A equipe da Óriva pode cadastrar uma nova disponibilidade.</div>') +
+      '</section><section class="meeting-panel"><div class="meeting-panel-head"><div><h3>Suas próximas reuniões</h3><p>O link do Meet fica disponível aqui após a sincronização.</p></div></div><div class="meeting-list client-meeting-upcoming">' + (upcoming.length ? upcoming.map(function (meeting) { return meetingCard(meeting, true); }).join('') : '<div class="meeting-empty">Você ainda não possui reunião agendada.</div>') + '</div></section></div>';
+  }
+
+  function commercialCompanyChanged(select) {
+    var company = state.commercialCompanies.find(function (item) { return item.id === select.value; });
+    if (!company) return;
+    var form = select.form;
+    if (form.elements.clientCompany && !form.elements.clientCompany.value) form.elements.clientCompany.value = company.name || '';
+    if (form.elements.clientEmail && !form.elements.clientEmail.value) form.elements.clientEmail.value = company.email || '';
+    if (form.elements.clientPhone && !form.elements.clientPhone.value) form.elements.clientPhone.value = company.phone || '';
+  }
+  window.commercialCompanyChanged = commercialCompanyChanged;
+
+  function openCommercialBooking(slotStart) {
+    var selected = slotStart || '';
+    var actor = state.commercialActor || {};
+    var isClient = actor.role === 'empresa_cliente';
+    var companyOptions = state.commercialCompanies.map(function (company) { return { value: company.id, label: company.name }; });
+    var slotOptions = state.commercialSlots.map(function (slot) {
+      var start = new Date(slot.startsAt);
+      return { value: slot.startsAt, label: start.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) + ' · ' + start.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) };
+    });
+    if (selected && !slotOptions.some(function (slot) { return slot.value === selected; })) selected = '';
+    var html = modalHead('Agendar reunião comercial') + '<form onsubmit="saveCommercialBooking(event)"><div class="modal-body">' +
+      '<div class="form-section"><div class="form-section-title">1. Horário</div><div class="form-section-desc">Somente horários liberados pela agenda do Luciano aparecem abaixo.</div><div class="form-grid">' +
+        field('Horário disponível', '<select name="startsAt" required>' + options(slotOptions, selected, 'Selecione um horário') + '</select>', true) +
+      '</div></div>' +
+      '<div class="form-section"><div class="form-section-title">2. Cliente</div><div class="form-grid">' +
+        (isClient ? '' : field('Cadastro existente', '<select name="companyId" onchange="commercialCompanyChanged(this)">' + options(companyOptions, '', 'Cliente ou lead sem vínculo') + '</select>', true)) +
+        field('Nome do cliente', '<input name="clientName" required maxlength="200" value="' + esc(isClient ? actor.name || '' : '') + '">') +
+        field('E-mail', '<input name="clientEmail" type="email" required value="' + esc(isClient ? actor.email || '' : '') + '">') +
+        field('Telefone', '<input name="clientPhone">') +
+        field('Empresa', '<input name="clientCompany">') +
+      '</div></div>' +
+      '<div class="form-section"><div class="form-section-title">3. Contexto comercial</div><div class="form-grid">' +
+        field('Necessidade do cliente', '<textarea name="clientNeeds" rows="3"></textarea>', true) +
+        field('Serviço de interesse', '<input name="serviceInterest">') +
+        field('Orçamento', '<input name="budget" placeholder="Faixa ou valor informado">') +
+        field('Principais objeções', '<textarea name="objections" rows="3"></textarea>') +
+        field('Informações importantes', '<textarea name="importantInformation" rows="3"></textarea>') +
+        field('Próximo passo', '<input name="nextStep">') +
+        field('Observações para o fechamento', '<textarea name="closingNotes" rows="3"></textarea>', true) +
+      '</div></div>' +
+      (state.commercialSlots.length ? '' : '<div class="google-setup-note">Antes de agendar, um sócio precisa informar a disponibilidade do Luciano.</div>') +
+      '<div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeManagementModal()">Cancelar</button><button class="btn btn-primary" type="submit"' + (state.commercialSlots.length ? '' : ' disabled') + '>Agendar e gerar Meet</button></div></div></form>';
+    showModal(html, true);
+  }
+  window.openCommercialBooking = openCommercialBooking;
+
+  async function saveCommercialBooking(event) {
+    event.preventDefault();
+    var button = event.submitter; if (button) { button.disabled = true; button.textContent = 'Agendando...'; }
+    try {
+      var data = Object.fromEntries(new FormData(event.currentTarget).entries());
+      var slot = state.commercialSlots.find(function (item) { return item.startsAt === data.startsAt; });
+      if (!slot) throw new Error('Este horário não está mais disponível. Atualize a agenda e escolha outro.');
+      data.action = 'book'; data.endsAt = slot.endsAt;
+      var payload = await api('/api/commercial-meetings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      closeManagementModal();
+      toast(payload.sync && payload.sync.message ? payload.sync.message : 'Reunião agendada com sucesso.', payload.sync && payload.sync.configured && !payload.sync.synchronized);
+      await loadCommercialMeetings();
+    } catch (error) {
+      toast(error.message, true);
+      if (button) { button.disabled = false; button.textContent = 'Agendar e gerar Meet'; }
+    }
+  }
+  window.saveCommercialBooking = saveCommercialBooking;
+
+  function openCommercialAvailability() {
+    if (!state.commercialCanManageSchedule) { toast('Somente os sócios podem alterar disponibilidades.', true); return; }
+    var partners = state.commercialPartners.map(function (partner) { return { value: partner.profileId, label: partner.name + (partner.isReference ? ' · referência comercial' : '') }; });
+    var days = meetingWeekdays.map(function (label, index) { return { value: String(index), label: label }; });
+    var html = modalHead('Informar disponibilidade') + '<form onsubmit="saveCommercialAvailability(event)"><div class="modal-body"><div class="form-grid">' +
+      field('Sócio', '<select name="profileId" required>' + options(partners, '', 'Selecione') + '</select>', true) +
+      field('Dia da semana', '<select name="weekday" required>' + options(days, '', 'Selecione') + '</select>') +
+      field('Início', '<input name="startTime" type="time" required>') +
+      field('Fim', '<input name="endTime" type="time" required>') +
+      field('Válido a partir de', '<input name="validFrom" type="date">') +
+      field('Válido até', '<input name="validUntil" type="date">') +
+      '</div><div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeManagementModal()">Cancelar</button><button class="btn btn-primary" type="submit">Salvar disponibilidade</button></div></div></form>';
+    showModal(html);
+  }
+  window.openCommercialAvailability = openCommercialAvailability;
+
+  async function saveCommercialAvailability(event) {
+    event.preventDefault(); var button = event.submitter; if (button) button.disabled = true;
+    try {
+      var data = Object.fromEntries(new FormData(event.currentTarget).entries()); data.action = 'availability'; data.weekday = Number(data.weekday);
+      await api('/api/commercial-meetings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      closeManagementModal(); toast('Disponibilidade salva.'); await loadCommercialMeetings();
+    } catch (error) { toast(error.message, true); if (button) button.disabled = false; }
+  }
+  window.saveCommercialAvailability = saveCommercialAvailability;
+
+  function openCommercialBlock() {
+    if (!state.commercialCanManageSchedule) { toast('Somente os sócios podem bloquear horários.', true); return; }
+    var partners = state.commercialPartners.map(function (partner) { return { value: partner.profileId, label: partner.name + (partner.isReference ? ' · bloqueia a agenda central' : '') }; });
+    var html = modalHead('Bloquear horário') + '<form onsubmit="saveCommercialBlock(event)"><div class="modal-body"><div class="form-grid">' +
+      field('Sócio', '<select name="profileId" required>' + options(partners, '', 'Selecione') + '</select>', true) +
+      field('Início', '<input name="startsAt" type="datetime-local" required>') +
+      field('Fim', '<input name="endsAt" type="datetime-local" required>') +
+      field('Motivo', '<textarea name="reason" required placeholder="Compromisso pessoal, viagem, outra reunião..."></textarea>', true) +
+      '</div><div class="google-setup-note">Bloqueios do Luciano removem o horário da agenda comercial. Bloqueios de Alexandre ou Lucas aparecem apenas nas agendas individuais.</div><div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeManagementModal()">Cancelar</button><button class="btn btn-primary" type="submit">Bloquear horário</button></div></div></form>';
+    showModal(html);
+  }
+  window.openCommercialBlock = openCommercialBlock;
+
+  async function saveCommercialBlock(event) {
+    event.preventDefault(); var button = event.submitter; if (button) button.disabled = true;
+    try {
+      var data = Object.fromEntries(new FormData(event.currentTarget).entries()); data.action = 'block';
+      await api('/api/commercial-meetings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      closeManagementModal(); toast('Horário bloqueado.'); await loadCommercialMeetings();
+    } catch (error) { toast(error.message, true); if (button) button.disabled = false; }
+  }
+  window.saveCommercialBlock = saveCommercialBlock;
+
+  async function deleteCommercialSchedule(type, id) {
+    if (!window.confirm(type === 'block' ? 'Remover este bloqueio?' : 'Remover esta disponibilidade?')) return;
+    try {
+      await api('/api/commercial-meetings?type=' + encodeURIComponent(type) + '&id=' + encodeURIComponent(id), { method: 'DELETE' });
+      toast('Agenda atualizada.'); await loadCommercialMeetings();
+    } catch (error) { toast(error.message, true); }
+  }
+  window.deleteCommercialSchedule = deleteCommercialSchedule;
+
+  function toggleMeetingResult(select) {
+    var fieldEl = select.form.querySelector('.meeting-result-field');
+    if (fieldEl) fieldEl.classList.toggle('hidden', select.value !== 'realizada');
+    if (select.value !== 'realizada' && select.form.elements.result) select.form.elements.result.value = '';
+  }
+  window.toggleMeetingResult = toggleMeetingResult;
+
+  function meetingNote(label, value) {
+    return '<div class="meeting-note-box"><span>' + esc(label) + '</span><p>' + esc(value || 'Não informado') + '</p></div>';
+  }
+
+  function openCommercialMeeting(id) {
+    var meeting = state.commercialMeetings.find(function (item) { return item.id === id; });
+    if (!meeting) { toast('Reunião não encontrada.', true); return; }
+    var actor = state.commercialActor || {};
+    var canEdit = actor.role !== 'empresa_cliente';
+    var meet = meeting.meetUrl ? '<a class="btn btn-primary" href="' + esc(meeting.meetUrl) + '" target="_blank" rel="noopener">Entrar no Google Meet</a>' : '<span class="google-setup-note">Google Meet ainda não gerado.</span>';
+    var participants = (meeting.participants || []).map(function (participant) { return esc(participant.displayName); }).join(' · ');
+    var readOnly = '<div class="modal-body"><div class="lead-detail-grid"><div><span>Data e horário</span><b>' + esc(dateTimeBR(meeting.startsAt)) + '</b></div><div><span>Status</span><b>' + esc(meetingStatusLabels[meeting.status] || meeting.status) + '</b></div><div><span>Resultado</span><b>' + esc(meetingResultLabels[meeting.result] || 'Não se aplica') + '</b></div><div><span>Agendada por</span><b>' + esc(meeting.bookedByName || 'Óriva') + '</b></div></div><div class="commercial-note"><span>Cliente</span><p>' + esc(meeting.clientName + ' · ' + meeting.clientEmail + (meeting.clientPhone ? ' · ' + meeting.clientPhone : '')) + '</p></div><div class="commercial-note"><span>Participantes</span><p>' + (participants || 'Luciano, Alexandre e Lucas') + '</p></div><div class="meeting-notes-grid">' +
+      meetingNote('Necessidade', meeting.clientNeeds) + meetingNote('Serviço de interesse', meeting.serviceInterest) + meetingNote('Orçamento', meeting.budget) + meetingNote('Objeções', meeting.objections) + meetingNote('Informações importantes', meeting.importantInformation) + meetingNote('Próximo passo', meeting.nextStep) + meetingNote('Observações para fechamento', meeting.closingNotes) + meetingNote('Observações gerais', meeting.observations) +
+      '</div><div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeManagementModal()">Fechar</button>' + meet + ((!meeting.meetUrl && canEdit) ? '<button type="button" class="btn btn-ghost" onclick="retryCommercialGoogleSync(\'' + esc(id) + '\')">Tentar sincronizar</button>' : '') + '</div></div>';
+    if (!canEdit) { showModal(modalHead('Detalhes da reunião') + readOnly, true); return; }
+    var html = modalHead('Gestão da reunião') + '<form onsubmit="saveCommercialMeeting(event,\'' + esc(id) + '\')"><div class="modal-body"><div class="lead-detail-grid"><div><span>Cliente</span><b>' + esc(meeting.clientName) + '</b></div><div><span>Data</span><b>' + esc(dateTimeBR(meeting.startsAt)) + '</b></div><div><span>Agendada por</span><b>' + esc(meeting.bookedByName || 'Óriva') + '</b></div><div><span>Google Meet</span><b>' + esc(meeting.googleSyncStatus === 'sincronizado' ? 'Sincronizado' : 'Pendente') + '</b></div></div><div class="form-grid">' +
+      field('Status', '<select name="status" onchange="toggleMeetingResult(this)">' + options([{ value: 'agendada', label: 'Agendada' }, { value: 'realizada', label: 'Realizada' }, { value: 'no_show', label: 'No show' }, { value: 'cancelada', label: 'Cancelada' }], meeting.status) + '</select>') +
+      '<label class="field meeting-result-field' + (meeting.status === 'realizada' ? '' : ' hidden') + '"><span>Resultado</span><select name="result"><option value="">Selecione</option>' + options([{ value: 'qualificado', label: 'Qualificado' }, { value: 'desqualificado', label: 'Desqualificado' }], meeting.result || '') + '</select></label>' +
+      field('Necessidade do cliente', '<textarea name="clientNeeds" rows="3">' + esc(meeting.clientNeeds) + '</textarea>', true) +
+      field('Serviço de interesse', '<input name="serviceInterest" value="' + esc(meeting.serviceInterest) + '">') +
+      field('Orçamento', '<input name="budget" value="' + esc(meeting.budget) + '">') +
+      field('Principais objeções', '<textarea name="objections" rows="3">' + esc(meeting.objections) + '</textarea>') +
+      field('Informações importantes', '<textarea name="importantInformation" rows="3">' + esc(meeting.importantInformation) + '</textarea>') +
+      field('Próximo passo', '<input name="nextStep" value="' + esc(meeting.nextStep) + '">') +
+      field('Observações para o fechamento', '<textarea name="closingNotes" rows="3">' + esc(meeting.closingNotes) + '</textarea>', true) +
+      field('Observações gerais', '<textarea name="observations" rows="3">' + esc(meeting.observations) + '</textarea>', true) +
+      '</div><div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeManagementModal()">Cancelar</button>' + meet + (!meeting.meetUrl ? '<button type="button" class="btn btn-ghost" onclick="retryCommercialGoogleSync(\'' + esc(id) + '\')">Sincronizar Google</button>' : '') + '<button class="btn btn-primary" type="submit">Salvar acompanhamento</button></div></div></form>';
+    showModal(html, true);
+  }
+  window.openCommercialMeeting = openCommercialMeeting;
+
+  async function saveCommercialMeeting(event, id) {
+    event.preventDefault(); var button = event.submitter; if (button) button.disabled = true;
+    try {
+      var data = Object.fromEntries(new FormData(event.currentTarget).entries()); data.id = id;
+      var payload = await api('/api/commercial-meetings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      closeManagementModal(); toast(payload.warning || 'Reunião atualizada.', !!payload.warning); await loadCommercialMeetings();
+    } catch (error) { toast(error.message, true); if (button) button.disabled = false; }
+  }
+  window.saveCommercialMeeting = saveCommercialMeeting;
+
+  async function retryCommercialGoogleSync(id) {
+    try {
+      var payload = await api('/api/commercial-meetings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sync_google', id: id }) });
+      closeManagementModal(); toast(payload.message || 'Sincronização concluída.', payload.configured && !payload.synchronized); await loadCommercialMeetings();
+    } catch (error) { toast(error.message, true); }
+  }
+  window.retryCommercialGoogleSync = retryCommercialGoogleSync;
 
   document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape') closeManagementModal();
