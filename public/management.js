@@ -1820,7 +1820,7 @@
     window.setTimeout(loadCommercialMeetings, 0);
     var range = meetingRange();
     return meetingPageHeader(false) +
-      '<div class="meeting-rule-banner"><div><h3>Luciano é o sócio de referência</h3><p>O horário fica disponível somente quando Luciano estiver livre. Alexandre e Lucas não bloqueiam a agenda comercial.</p></div><strong>Luciano disponível = horário liberado</strong></div>' +
+      '<div class="meeting-rule-banner"><div><h3>Como funciona a disponibilidade?</h3><p>Para facilitar os agendamentos, seguimos a agenda do Luciano. Quando ele estiver disponível, a reunião poderá ser marcada, mesmo que Alexandre ou Lucas não estejam livres.</p></div><strong>Luciano disponível • horário aberto para agendamento</strong></div>' +
       '<div class="meeting-toolbar">' +
         field('De', '<input id="meeting-filter-from" type="date" value="' + range.from + '" onchange="loadCommercialMeetings()">') +
         field('Até', '<input id="meeting-filter-to" type="date" value="' + range.to + '" onchange="loadCommercialMeetings()">') +
