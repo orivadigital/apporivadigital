@@ -64,5 +64,5 @@ test("client review is rejected until the agency has released the content", asyn
 
 test("the public page uses a fresh calendar asset version for mobile browsers", async () => {
   const html = await read("public/oriva-plataforma.html");
-  assert.match(html, /content-calendar\.js\?v=20260825-1/);
+  assert.match(html, /content-calendar\.js\?v=20260901-3/);
 });

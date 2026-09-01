@@ -37,7 +37,9 @@ test("calendar import route is agency-only, checks duplicates and commits atomic
   assert.match(route, /scheduled_posts\?company_id=eq\./);
   assert.match(route, /duplicateKeys/);
   assert.match(route, /status:\s*"rascunho"/);
-  assert.match(route, /client_notes:\s*""/);
+  assert.match(route, /working_caption:\s*item\.caption/);
+  assert.match(route, /working_client_notes:\s*""/);
+  assert.match(route, /internal_references:\s*item\.referenceLinks\.join/);
   assert.match(route, /assigned_to:\s*null/);
   assert.match(route, /partner_id:\s*null/);
   assert.match(route, /rpc\/create_scheduled_posts_batch/);
@@ -72,6 +74,6 @@ test("calendar interface provides paste, preview, editing and explicit draft con
   assert.match(management, /openCalendarAiImportFromAgenda\(\)/);
   assert.match(html, /agenda-ai-import-banner/);
   assert.match(html, /ai-import-item-grid/);
-  assert.match(html, /content-calendar\.js\?v=20260901-2/);
+  assert.match(html, /content-calendar\.js\?v=20260901-3/);
   assert.match(html, /management\.js\?v=20260901-1/);
 });
