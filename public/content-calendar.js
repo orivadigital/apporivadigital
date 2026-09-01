@@ -15,6 +15,7 @@
     pendingReferenceFiles: [],
     aiImportSource: '',
     aiImportAnalysis: null,
+    openAiImportAfterLoad: false,
     view: 'month',
     cursor: new Date(),
     filters: { status: '', content_type: '', social_network: '' }
@@ -348,6 +349,10 @@
         }
       }
       renderContentCalendar();
+      if (contentState.openAiImportAfterLoad) {
+        contentState.openAiImportAfterLoad = false;
+        window.setTimeout(openCalendarAiImport, 0);
+      }
     } catch (error) {
       renderCalendarError(error.message);
     }
@@ -614,6 +619,18 @@
     showModal(html, true);
   }
   window.openCalendarAiImport = openCalendarAiImport;
+
+  function openCalendarAiImportFromAgenda() {
+    var role = currentActor().role;
+    if (role === 'colaborador' || role === 'parceiro' || role === 'empresa_cliente') {
+      showToast('Somente os sócios da Óriva podem importar cronogramas.', true);
+      return;
+    }
+    contentState.openAiImportAfterLoad = true;
+    contentState.aiImportSource = '';
+    irPara('calendario-posts');
+  }
+  window.openCalendarAiImportFromAgenda = openCalendarAiImportFromAgenda;
 
   async function analyzeCalendarAiImport(event) {
     event.preventDefault();

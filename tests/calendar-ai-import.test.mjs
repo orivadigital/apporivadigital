@@ -46,8 +46,9 @@ test("calendar import route is agency-only, checks duplicates and commits atomic
 });
 
 test("calendar interface provides paste, preview, editing and explicit draft confirmation", async () => {
-  const [calendar, html] = await Promise.all([
+  const [calendar, management, html] = await Promise.all([
     read("public/content-calendar.js"),
+    read("public/management.js"),
     read("public/oriva-plataforma.html"),
   ]);
 
@@ -61,6 +62,16 @@ test("calendar interface provides paste, preview, editing and explicit draft con
   assert.match(calendar, /sem arte e sem envio ao cliente/);
   assert.match(calendar, /Revisar legenda e briefing/);
   assert.match(calendar, /Nada será enviado ao cliente/);
+  assert.match(calendar, /function openCalendarAiImportFromAgenda\(\)/);
+  assert.match(calendar, /contentState\.openAiImportAfterLoad = true/);
+  assert.match(calendar, /irPara\('calendario-posts'\)/);
+  assert.match(calendar, /window\.setTimeout\(openCalendarAiImport, 0\)/);
+  assert.match(management, /Colar cronograma com IA/);
+  assert.match(management, /Organize o calendário usando seu cronograma escrito/);
+  assert.match(management, /Colar meu cronograma/);
+  assert.match(management, /openCalendarAiImportFromAgenda\(\)/);
+  assert.match(html, /agenda-ai-import-banner/);
   assert.match(html, /ai-import-item-grid/);
-  assert.match(html, /content-calendar\.js\?v=20260901-1/);
+  assert.match(html, /content-calendar\.js\?v=20260901-2/);
+  assert.match(html, /management\.js\?v=20260901-1/);
 });
