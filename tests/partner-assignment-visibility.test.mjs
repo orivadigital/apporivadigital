@@ -61,7 +61,7 @@ test("overview, task board and agenda unify tasks with assigned calendar content
   assert.match(calendar, /openContentDetails\(pendingId\)/);
   assert.match(html, /\.task-item-clickable:hover,\.task-item-clickable:focus-visible/);
   assert.match(html, /management\.js\?v=20260829-1/);
-  assert.match(html, /content-calendar\.js\?v=20260825-1/);
+  assert.match(html, /content-calendar\.js\?v=20260901-1/);
 });
 
 test("calendar contents open the same item on desktop, tablet and mobile", async () => {
